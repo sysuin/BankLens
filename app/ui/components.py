@@ -2,7 +2,7 @@
 Reusable Streamlit UI components for BankLens.
 
 Renders polished UI blocks with enterprise-grade styling:
-    - inject_custom_css()      — master CSS for font, gradients, dark sidebar, mobile responsiveness
+    - inject_custom_css()      — master CSS for font, gradients, light mode lock, dark sidebar, mobile responsiveness
     - render_header()          — sleek header with gradient title & live badge
     - render_metric_cards()    — formatted KPI cards
     - render_transaction_table() — styled DataFrame display
@@ -28,7 +28,7 @@ RISK_COLOURS: dict[str, str] = {
 
 
 def inject_custom_css() -> None:
-    """Inject custom CSS rules for a premium enterprise fintech aesthetic."""
+    """Inject custom CSS rules for a premium enterprise fintech aesthetic locked in Light Mode."""
     st.markdown(
         textwrap.dedent("""
         <style>
@@ -36,6 +36,21 @@ def inject_custom_css() -> None:
 
         html, body, [class*="css"] {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        /* Force Main Container Light Mode */
+        [data-testid="stAppViewContainer"], .stApp {
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+        }
+
+        [data-testid="stHeader"] {
+            background-color: rgba(255, 255, 255, 0.9) !important;
+        }
+
+        /* Main Workspace Typography */
+        .stApp p, .stApp span, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp li {
+            color: #0f172a;
         }
 
         /* Metric card styling */
