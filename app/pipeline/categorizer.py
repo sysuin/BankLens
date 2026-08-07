@@ -9,15 +9,17 @@ using a keyword dictionary. This approach is:
     - Extensible: add new keywords by editing KEYWORD_MAP
 
 Supported categories:
-    Income        — salary, freelance payments, interest, refunds
-    Food          — restaurants, food delivery, grocery stores
-    Transport     — cabs, fuel, metro, flights, parking
-    Utilities     — electricity, internet, gas, mobile bills
-    Subscriptions — streaming, SaaS tools, memberships
-    Shopping      — e-commerce, retail, apparel
-    Health        — pharmacy, hospital, insurance, diagnostics
-    Savings       — FD transfers, SIP, mutual funds, RD
-    Others        — anything that does not match a keyword
+    Income         — salary, freelance payments, interest, refunds
+    Rent & Housing — house rent, apartment maintenance, society fees
+    Education      — school fees, college tuition, coaching
+    Food           — restaurants, food delivery, grocery stores
+    Transport      — cabs, fuel, metro, flights, car repair
+    Utilities      — electricity, internet, gas cylinder, mobile bills
+    Subscriptions  — streaming, SaaS tools, memberships
+    Health         — pharmacy, hospital, insurance, diagnostics
+    Shopping       — e-commerce, retail, apparel
+    Savings        — FD transfers, SIP, mutual funds, RD
+    Others         — anything that does not match a keyword
 """
 
 import pandas as pd
@@ -27,13 +29,6 @@ from app.core.logger import get_logger
 logger = get_logger(__name__)
 
 # ── Keyword Dictionary ────────────────────────────────────────────────────────
-# Each key is a category name. Each value is a list of lowercase substrings
-# to match against the transaction description.
-#
-# Matching is sequential: the first category whose keyword is found wins.
-# Order within KEYWORD_MAP matters — 'Income' is checked first to correctly
-# classify inflows before any debit-side pattern can match.
-
 KEYWORD_MAP: dict[str, list[str]] = {
     "Income": [
         "salary",
@@ -48,6 +43,25 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "incentive",
         "dividend",
         "reimbursement",
+    ],
+    "Rent & Housing": [
+        "rent",
+        "house maintenance",
+        "housing",
+        "lease",
+        "apartment",
+        "society fee",
+        "landlord",
+    ],
+    "Education": [
+        "school",
+        "college",
+        "tuition",
+        "coaching",
+        "fees",
+        "education",
+        "course",
+        "academy",
     ],
     "Food": [
         "zomato",
@@ -92,11 +106,18 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "makemytrip",
         "goibibo",
         "redbus",
+        "car repair",
+        "service station",
+        "mechanic",
+        "repair",
     ],
     "Utilities": [
         "electricity",
         "water bill",
         "gas bill",
+        "gas cylinder",
+        "cylinder",
+        "lpg",
         "broadband",
         "wifi",
         "airtel",
@@ -179,27 +200,7 @@ KEYWORD_MAP: dict[str, list[str]] = {
 
 
 def categorize(description: str) -> str:
-    """
-    Assign a spending category to a single transaction description.
-
-    Normalises the description to lowercase and checks it against each
-    category's keyword list in order. Returns the first matching category,
-    or 'Others' if no keyword matches.
-
-    Args:
-        description: The raw transaction description string from the CSV.
-
-    Returns:
-        A category string, e.g. 'Food', 'Transport', 'Income', 'Others'.
-
-    Examples:
-        >>> categorize("Zomato Order #12345")
-        'Food'
-        >>> categorize("Salary Credit - March")
-        'Income'
-        >>> categorize("Unknown Merchant XYZ")
-        'Others'
-    """
+    """Assign a spending category to a single transaction description."""
     normalized = description.lower().strip()
 
     for category, keywords in KEYWORD_MAP.items():
@@ -218,17 +219,7 @@ def categorize(description: str) -> str:
 
 
 def categorize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Apply categorize() to every row of the transactions DataFrame.
-
-    Adds a new 'category' column without modifying the original DataFrame.
-
-    Args:
-        df: A pandas DataFrame that must contain a 'description' column.
-
-    Returns:
-        A new DataFrame with an added 'category' column.
-    """
+    """Apply categorize() to every row of the transactions DataFrame."""
     result = df.copy()
     result["category"] = result["description"].apply(categorize)
     logger.info("Categorized %d transactions.", len(result))

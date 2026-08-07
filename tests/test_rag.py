@@ -33,11 +33,12 @@ class TestLoadDocuments:
             "Make sure you are running tests from the project root."
         )
 
-    def test_all_six_product_files_are_present(self):
-        """All six knowledge base markdown files must be present."""
+    def test_all_seven_product_files_are_present(self):
+        """All seven knowledge base markdown files must be present."""
         expected_files = {
             "fixed_deposit.md",
             "personal_loan.md",
+            "debt_consolidation_loan.md",
             "credit_card.md",
             "savings_account.md",
             "recurring_deposit.md",
@@ -47,10 +48,10 @@ class TestLoadDocuments:
         missing = expected_files - actual_files
         assert not missing, f"Missing knowledge base files: {missing}"
 
-    def test_load_documents_returns_six_documents(self):
+    def test_load_documents_returns_seven_documents(self):
         """_load_documents() should return exactly one document per .md file."""
         documents = _load_documents()
-        assert len(documents) == 6
+        assert len(documents) == 7
 
     def test_each_document_has_source_metadata(self):
         """Each loaded document must have a 'source' key in its metadata."""
