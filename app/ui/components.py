@@ -1,8 +1,8 @@
 """
 Reusable Streamlit UI components for BankLens.
 
-Renders polished UI blocks with enterprise-grade styling:
-    - inject_custom_css()      — master CSS for font, gradients, light mode lock, dark sidebar, mobile responsiveness
+Renders polished UI blocks with enterprise-grade styling & SEO metadata:
+    - inject_custom_css()      — master CSS for font, gradients, SEO meta tags, light mode lock, dark sidebar, mobile responsiveness
     - render_header()          — sleek header with gradient title & live badge
     - render_metric_cards()    — formatted KPI cards
     - render_transaction_table() — styled DataFrame display
@@ -28,7 +28,35 @@ RISK_COLOURS: dict[str, str] = {
 
 
 def inject_custom_css() -> None:
-    """Inject custom CSS rules for a premium enterprise fintech aesthetic locked in Light Mode."""
+    """Inject custom CSS rules and SEO meta tags for search engines and social sharing."""
+    # ── SEO Meta Tags Injection ───────────────────────────────────────────────
+    st.markdown(
+        textwrap.dedent("""
+        <head>
+            <title>BankLens | AI Bank Statement Analyzer &amp; Product Recommendation Engine</title>
+            <meta name="description" content="BankLens is an enterprise AI financial intelligence platform that converts bank statements into financial health profiles, credit risk ratings, and grounded banking product recommendations." />
+            <meta name="keywords" content="Bank Statement Analyzer, AI Financial Profiling, RAG Banking, Credit Risk Assessment, Relationship Manager Tool, FinTech AI, LangChain, Streamlit, ChromaDB" />
+            <meta name="author" content="Sunny Singh" />
+            <meta name="robots" content="index, follow" />
+            <link rel="canonical" href="https://banklens.sysuin.com" />
+
+            <!-- Open Graph / Social Sharing -->
+            <meta property="og:type" content="website" />
+            <meta property="og:url" content="https://banklens.sysuin.com" />
+            <meta property="og:title" content="BankLens | AI Bank Statement Analyzer &amp; Product Recommendation Engine" />
+            <meta property="og:description" content="Automated financial health analysis, RAG product recommendations, and relationship manager pitch generation powered by GPT-4o and ChromaDB." />
+
+            <!-- Twitter Card -->
+            <meta property="twitter:card" content="summary_large_image" />
+            <meta property="twitter:url" content="https://banklens.sysuin.com" />
+            <meta property="twitter:title" content="BankLens | AI Bank Statement Analyzer" />
+            <meta property="twitter:description" content="Automated financial health analysis and RAG product recommendations for retail banking." />
+        </head>
+        """),
+        unsafe_allow_html=True,
+    )
+
+    # ── Master CSS Styling ───────────────────────────────────────────────────
     st.markdown(
         textwrap.dedent("""
         <style>

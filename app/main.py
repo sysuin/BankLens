@@ -38,7 +38,7 @@ logger = get_logger(__name__)
 
 # ── Page config — must be the first Streamlit call ────────────────────────────
 st.set_page_config(
-    page_title="BankLens | AI Bank Statement Analyzer",
+    page_title="BankLens | AI Bank Statement Analyzer & Product Recommendation Engine",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded",
