@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "banklens"
+version = "0.1.0"
+description = "AI-powered bank statement analysis and product recommendation"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+# Tell setuptools to find all packages under the project root.
+# This makes 'app', 'app.core', 'app.pipeline', and 'app.ui'
+# all importable from anywhere once the project is installed.
+where = ["."]
+include = ["app*"]

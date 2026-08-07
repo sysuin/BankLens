@@ -1,0 +1,161 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BankLens — GitHub Actions CI/CD Pipeline
+#
+# Triggers on every push and pull request to the main branch.
+#
+# Jobs (run in sequence — each depends on the previous passing):
+#   1. lint    — check code formatting (black) and style (flake8)
+#   2. test    — run pytest with coverage report
+#   3. build   — build Docker image and push to Amazon ECR
+#   4. deploy  — SSH into EC2 and pull + restart the container
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   OPENAI_API_KEY          — used in the test job to validate config loading
+#   AWS_ACCESS_KEY_ID       — IAM user with ECR and EC2 permissions
+#   AWS_SECRET_ACCESS_KEY   — IAM user secret key
+#   AWS_REGION              — e.g. ap-south-1
+#   ECR_REPOSITORY          — ECR repository URI (e.g. 1234.dkr.ecr.ap-south-1.amazonaws.com/banklens)
+#   EC2_HOST                — public IP or DNS of the EC2 instance
+#   EC2_SSH_KEY             — private SSH key for EC2 access (PEM format)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: BankLens CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Lint ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting tools
+        run: pip install black flake8
+
+      - name: Check formatting with black
+        # black --check exits with code 1 if any file would be reformatted
+        run: black --check .
+
+      - name: Check style with flake8
+        run: flake8 .
+
+  # ── Job 2: Test ─────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint  # Only run tests if linting passes
+
+    env:
+      # A dummy API key is enough for unit tests — no real API call is made
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=app --cov-report=term-missing -v
+
+  # ── Job 3: Build & Push to ECR ───────────────────────────────────────────────
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test  # Only build if all tests pass
+    # Only build on pushes to main — not on pull requests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build the image and tag it with both the commit SHA and 'latest'
+          docker build -t ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
+          docker tag ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG ${{ secrets.ECR_REPOSITORY }}:latest
+
+          # Push both tags to ECR
+          docker push ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG
+          docker push ${{ secrets.ECR_REPOSITORY }}:latest
+
+          echo "Image pushed: ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG"
+
+  # ── Job 4: Deploy to EC2 ─────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    needs: build  # Only deploy after a successful build and push
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # Pass secrets as environment variables into the SSH session
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REPOSITORY,OPENAI_API_KEY
+          script: |
+            # Authenticate Docker with Amazon ECR
+            aws ecr get-login-password --region $AWS_REGION \
+              | docker login --username AWS --password-stdin $ECR_REPOSITORY
+
+            # Pull the latest image from ECR
+            docker pull $ECR_REPOSITORY:latest
+
+            # Stop and remove the existing container (ignore errors if not running)
+            docker stop banklens_app || true
+            docker rm banklens_app || true
+
+            # Start a new container with the updated image
+            # The OPENAI_API_KEY is passed in as an environment variable
+            docker run -d \
+              --name banklens_app \
+              --restart unless-stopped \
+              -p 8501:8501 \
+              -e OPENAI_API_KEY=$OPENAI_API_KEY \
+              -v /home/ec2-user/chroma_db:/app/chroma_db \
+              $ECR_REPOSITORY:latest
+
+            echo "Deployment complete. App running at http://${{ secrets.EC2_HOST }}:8501"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

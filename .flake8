@@ -1,0 +1,17 @@
+[flake8]
+# Maximum line length — matches black's default
+max-line-length = 88
+
+# Ignore line-too-long in docstrings and comments (black handles formatting)
+extend-ignore = E203, W503
+
+# Directories to exclude from linting
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    build,
+    dist,
+    chroma_db,
+    .github
