@@ -208,6 +208,28 @@ def inject_custom_css() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── JS: Replace file uploader limit text (Streamlit hardcodes it in React) ──
+    st.markdown(
+        """
+        <script>
+        (function() {
+            function fixUploaderText() {
+                document.querySelectorAll('[data-testid="stFileUploader"] small').forEach(function(el) {
+                    if (el.innerText && el.innerText !== 'Limit 5MB per file \u2022 CSV') {
+                        el.innerText = 'Limit 5MB per file \u2022 CSV';
+                    }
+                });
+            }
+            // Run once on load and then watch for DOM changes (Streamlit rerenders)
+            fixUploaderText();
+            var observer = new MutationObserver(fixUploaderText);
+            observer.observe(document.body, { childList: true, subtree: true });
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def render_header() -> None:
     """Render the main header banner with title and subtitle."""
