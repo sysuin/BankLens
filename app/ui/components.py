@@ -88,14 +88,24 @@ def inject_custom_css() -> None:
             padding: 0.75rem !important;
         }
 
-        [data-testid="stFileUploader"] * {
+        [data-testid="stFileUploader"] label {
             color: #f8fafc !important;
+            font-weight: 600 !important;
+        }
+
+        [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploader"] [data-testid="stCaptionContainer"],
+        [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] p,
+        [data-testid="stFileUploader"] span {
+            color: #94a3b8 !important;
+            font-size: 0.78rem !important;
         }
 
         [data-testid="stFileUploader"] button {
             background-color: #334155 !important;
             color: #ffffff !important;
             border: 1px solid #475569 !important;
+            border-radius: 8px !important;
         }
 
         /* Compact sidebar element spacing */
