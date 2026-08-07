@@ -1,0 +1,44 @@
+# Files and directories to exclude from the Docker build context.
+# A smaller build context means faster docker build and docker push times.
+
+# Environment variables — never send secrets to the build context
+.env
+
+# ChromaDB persisted data — built inside the container, not baked in
+chroma_db/
+
+# Git metadata
+.git/
+.gitignore
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE configuration
+.vscode/
+.idea/
+*.swp
+
+# macOS system files
+.DS_Store
+
+# GitHub Actions (not needed inside the container)
+.github/
+
+# Development docs (not needed inside the container)
+README.md

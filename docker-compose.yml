@@ -1,0 +1,33 @@
+# BankLens — Local Development with Docker Compose
+#
+# Usage:
+#   docker-compose up --build      # Build image and start the app
+#   docker-compose up              # Start the app (no rebuild)
+#   docker-compose down            # Stop the app
+#
+# Prerequisites:
+#   - Copy .env.example to .env and fill in your OPENAI_API_KEY
+
+services:
+  banklens:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: banklens_app
+
+    # Load environment variables from the .env file
+    env_file:
+      - .env
+
+    ports:
+      # Map container port 8501 to host port 8501
+      - "8501:8501"
+
+    volumes:
+      # Persist the ChromaDB vector store between container restarts.
+      # Without this mount, the knowledge base is re-embedded every time
+      # the container starts, which wastes time and API credits.
+      - ./chroma_db:/app/chroma_db
+
+    # Restart the container automatically unless it is explicitly stopped
+    restart: unless-stopped
