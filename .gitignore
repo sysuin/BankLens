@@ -1,5 +1,6 @@
-# Environment variables — never commit secrets
+# Environment variables and keys — never commit secrets
 .env
+*.pem
 
 # ChromaDB persisted data
 chroma_db/
