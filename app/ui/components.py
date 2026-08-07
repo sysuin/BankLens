@@ -39,14 +39,11 @@ def inject_custom_css() -> None:
             <meta name="author" content="Sunny Singh" />
             <meta name="robots" content="index, follow" />
             <link rel="canonical" href="https://banklens.sysuin.com" />
-
-            <!-- Open Graph / Social Sharing -->
+            <meta name="color-scheme" content="light" />
             <meta property="og:type" content="website" />
             <meta property="og:url" content="https://banklens.sysuin.com" />
             <meta property="og:title" content="BankLens | AI Bank Statement Analyzer &amp; Product Recommendation Engine" />
             <meta property="og:description" content="Automated financial health analysis, RAG product recommendations, and relationship manager pitch generation powered by GPT-4o and ChromaDB." />
-
-            <!-- Twitter Card -->
             <meta property="twitter:card" content="summary_large_image" />
             <meta property="twitter:url" content="https://banklens.sysuin.com" />
             <meta property="twitter:title" content="BankLens | AI Bank Statement Analyzer" />
@@ -137,11 +134,11 @@ def inject_custom_css() -> None:
         }
 
         [data-testid="stFileUploader"] small,
-        [data-testid="stFileUploader"] [data-testid="stCaptionContainer"],
-        [data-testid="stFileUploader"] div[data-testid="stMarkdownContainer"] p,
-        [data-testid="stFileUploader"] span {
-            color: #94a3b8 !important;
+        [data-testid="stFileUploader"] [data-testid="stCaptionContainer"] p,
+        [data-testid="stFileUploader"] span:not(button span) {
+            color: #0f172a !important;
             font-size: 0.78rem !important;
+            font-weight: 600 !important;
         }
 
         [data-testid="stFileUploader"] button {
