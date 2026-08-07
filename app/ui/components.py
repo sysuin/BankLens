@@ -14,6 +14,7 @@ Renders polished UI blocks with enterprise-grade styling & SEO metadata:
 import textwrap
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from app.pipeline.analyzer import FinancialMetrics
 from app.pipeline.agent import CustomerProfile
@@ -208,26 +209,33 @@ def inject_custom_css() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── JS: Replace file uploader limit text (Streamlit hardcodes it in React) ──
-    st.markdown(
+    # ── JS: Replace file uploader limit text ─────────────────────────────────
+    # st.markdown strips <script> tags in production. The only reliable way to
+    # execute JS in Streamlit is components.html(), which creates an iframe.
+    # We use window.parent.document to reach the main app's DOM from the iframe.
+    components.html(
         """
         <script>
         (function() {
             function fixUploaderText() {
-                document.querySelectorAll('[data-testid="stFileUploader"] small').forEach(function(el) {
-                    if (el.innerText && el.innerText !== 'Limit 5MB per file \u2022 CSV') {
-                        el.innerText = 'Limit 5MB per file \u2022 CSV';
-                    }
-                });
+                try {
+                    var els = window.parent.document.querySelectorAll(
+                        '[data-testid="stFileUploader"] small'
+                    );
+                    els.forEach(function(el) {
+                        if (el.innerText && el.innerText.indexOf('5MB') === -1) {
+                            el.innerText = 'Limit 5MB per file \u2022 CSV';
+                        }
+                    });
+                } catch(e) {}
             }
-            // Run once on load and then watch for DOM changes (Streamlit rerenders)
             fixUploaderText();
             var observer = new MutationObserver(fixUploaderText);
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(window.parent.document.body, { childList: true, subtree: true });
         })();
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
     )
 
 
