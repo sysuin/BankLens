@@ -10,10 +10,6 @@ Builds a LangChain chain that:
 Using PydanticOutputParser ensures the LLM output always matches the
 expected schema. If the model returns malformed JSON, LangChain raises
 a descriptive error rather than silently failing downstream.
-
-The agent is grounded by design — the system prompt explicitly instructs
-the model to recommend only products that appear in the retrieved context
-and to never invent financial figures.
 """
 
 from pathlib import Path
@@ -41,74 +37,74 @@ SYSTEM_PROMPT_PATH = (
 
 class CustomerProfile(BaseModel):
     """
-    Structured output produced by the LangChain agent.
+    Structured analytical output produced by the LangChain agent.
 
     Every field is grounded in the customer's actual transaction data
-    and the RAG-retrieved banking product context. No field should
-    contain invented or hallucinated information.
+    and the RAG-retrieved banking product context.
     """
 
     financial_persona: str = Field(
-        description=(
-            "A short label describing the customer's financial archetype. "
-            "Examples: 'Disciplined Saver', 'Active Lifestyle Spender', "
-            "'Growth-Oriented Professional', 'Cautious Budgeter'."
-        )
+        description="Short label describing the customer archetype, e.g. 'Disciplined High-Net Saver'."
+    )
+
+    financial_health_score: int = Field(
+        description="Overall financial health score from 0 to 100 based on savings rate and expense stability."
     )
 
     risk_profile: Literal["Low", "Medium", "High"] = Field(
-        description=(
-            "Credit and financial risk rating based on savings rate and "
-            "expense-to-income ratio. "
-            "Low = savings rate > 30%, Medium = 10–30%, High = < 10%."
-        )
+        description="Credit and default risk rating based on expense-to-income ratio and cashflow deficit."
     )
 
-    spending_insight: str = Field(
-        description=(
-            "One concise sentence summarising the customer's most notable "
-            "spending pattern, citing the actual top category and amount."
-        )
+    income_stability_analysis: str = Field(
+        description="Detailed analysis of income credits, salary stability, and secondary inflows."
     )
 
-    savings_insight: str = Field(
-        description=(
-            "One concise sentence describing the customer's savings behaviour "
-            "and what it signals about their financial discipline."
-        )
+    spending_pattern_breakdown: str = Field(
+        description="Detailed breakdown of essential vs discretionary spending based on actual category totals."
     )
 
-    recommended_product: str = Field(
-        description=(
-            "The specific banking product name from the retrieved context "
-            "that best fits this customer's profile. "
-            "Must be an exact product name from the knowledge base."
-        )
+    credit_risk_assessment: str = Field(
+        description="In-depth credit default risk assessment explaining why the customer is rated Low/Medium/High risk."
     )
 
-    recommendation_reason: str = Field(
-        description=(
-            "Two to three sentences explaining why this product suits the "
-            "customer, grounded in the retrieved knowledge base context. "
-            "Reference the customer's actual metrics."
-        )
+    primary_product: str = Field(
+        description="The primary banking product recommended from the retrieved context."
     )
 
-    rm_hook: str = Field(
-        description=(
-            "A personalised, one-sentence opening line a Bank Relationship "
-            "Manager can use to start a call with this customer. It should "
-            "reference a specific detail from their statement."
-        )
+    primary_reason: str = Field(
+        description="2-3 detailed sentences explaining why the primary product fits the customer's metrics."
+    )
+
+    secondary_product: str = Field(
+        description="A complementary secondary product from the retrieved context to cross-sell."
+    )
+
+    secondary_reason: str = Field(
+        description="1-2 sentences explaining why the secondary product adds value to the customer."
+    )
+
+    rm_hook_points: list[str] = Field(
+        description="Exactly 3 structured bullet points for the RM call pitch: 1. Opening observation, 2. Value proposition, 3. Call-to-action."
     )
 
     retrieved_sources: list[str] = Field(
-        description=(
-            "List of knowledge base filenames that were retrieved and used "
-            "as context for this recommendation. "
-            "Example: ['fixed_deposit.md', 'savings_account.md']."
-        )
+        description="List of knowledge base filenames retrieved for this recommendation."
     )
+
+    @property
+    def recommended_product(self) -> str:
+        """Alias for backward compatibility with UI components."""
+        return self.primary_product
+
+    @property
+    def recommendation_reason(self) -> str:
+        """Alias for backward compatibility with UI components."""
+        return self.primary_reason
+
+    @property
+    def rm_hook(self) -> str:
+        """Alias for backward compatibility — joins bullet points into a clean string."""
+        return " | ".join(self.rm_hook_points)
 
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
@@ -118,53 +114,22 @@ def build_profile(
     metrics: FinancialMetrics,
     retrieved_chunks: list[dict],
 ) -> CustomerProfile:
-    """
-    Generate a structured CustomerProfile using GPT-4o and RAG context.
-
-    Constructs a LangChain chain:
-        ChatPromptTemplate → ChatOpenAI → PydanticOutputParser
-
-    The prompt includes:
-        - The system prompt (persona, rules, tone) from system_prompt.txt
-        - The customer's financial metrics as JSON
-        - The RAG-retrieved product context (text + source filenames)
-        - Pydantic format instructions injected automatically by the parser
-
-    Args:
-        metrics: The validated FinancialMetrics for this customer.
-        retrieved_chunks: List of dicts from rag.retrieve(), each with
-                          'content' (str) and 'source' (str) keys.
-
-    Returns:
-        A validated CustomerProfile Pydantic model.
-
-    Raises:
-        FileNotFoundError: If system_prompt.txt does not exist.
-        ValidationError: If GPT-4o returns output that does not match
-                         the CustomerProfile schema.
-    """
+    """Generate a structured CustomerProfile using GPT-4o and RAG context."""
     if not SYSTEM_PROMPT_PATH.exists():
         raise FileNotFoundError(f"System prompt not found at: {SYSTEM_PROMPT_PATH}")
 
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     parser = PydanticOutputParser(pydantic_object=CustomerProfile)
 
-    # ── Format the RAG context block ──────────────────────────────────────────
-    # Each retrieved chunk is prefixed with its source filename so the LLM
-    # can cite it in the recommendation_reason and retrieved_sources fields.
     rag_context_block = "\n\n---\n\n".join(
         f"[Source: {chunk['source']}]\n{chunk['content']}" for chunk in retrieved_chunks
     )
 
-    # Collect unique source filenames for injection into retrieved_sources
     source_filenames = sorted({chunk["source"] for chunk in retrieved_chunks})
 
-    # ── Build the prompt template ─────────────────────────────────────────────
     prompt = ChatPromptTemplate.from_messages(
         [
-            # System message: establishes the persona and output rules
             ("system", system_prompt + "\n\n{format_instructions}"),
-            # Human message: provides the actual customer data
             (
                 "human",
                 "## Customer Financial Metrics\n\n"
@@ -177,15 +142,12 @@ def build_profile(
         ]
     )
 
-    # ── Initialise the LLM ────────────────────────────────────────────────────
     llm = ChatOpenAI(
         model=settings.openai_model,
-        temperature=0.2,  # Low temperature for consistent, structured output
+        temperature=0.2,
         openai_api_key=settings.openai_api_key,
     )
 
-    # ── Compose the chain ─────────────────────────────────────────────────────
-    # LangChain's pipe operator: prompt → LLM → parser
     chain = prompt | llm | parser
 
     logger.info(
@@ -204,14 +166,14 @@ def build_profile(
         }
     )
 
-    # Overwrite retrieved_sources with the actual filenames used
-    # (the LLM may summarise them differently in its output)
     profile.retrieved_sources = source_filenames
 
     logger.info(
-        "Profile built | Persona: '%s' | Risk: %s | Product: '%s'",
+        "Profile built | Persona: '%s' | Score: %d | Risk: %s | Primary: '%s' | Secondary: '%s'",
         profile.financial_persona,
+        profile.financial_health_score,
         profile.risk_profile,
-        profile.recommended_product,
+        profile.primary_product,
+        profile.secondary_product,
     )
     return profile

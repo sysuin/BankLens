@@ -1,6 +1,7 @@
-# Environment variables and keys — never commit secrets
+# Environment variables, keys, and personal notes — never commit
 .env
 *.pem
+BankLens.md
 
 # ChromaDB persisted data
 chroma_db/

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
 
     # Number of product chunks to retrieve for each customer query
-    retrieval_k: int = 3
+    retrieval_k: int = 4
 
     model_config = SettingsConfigDict(
         env_file=".env",

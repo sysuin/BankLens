@@ -71,8 +71,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies and editable package
+        run: pip install -r requirements.txt && pip install -e .
 
       - name: Run tests with coverage
         run: pytest tests/ --cov=app --cov-report=term-missing -v
@@ -141,6 +141,7 @@ jobs:
             # Stop and remove the existing container (ignore errors if not running)
             docker stop banklens_app || true
             docker rm banklens_app || true
+            rm -rf /home/ec2-user/chroma_db/*
 
             # Start a new container with the updated image
             # The OPENAI_API_KEY is passed in as an environment variable

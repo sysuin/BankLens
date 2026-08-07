@@ -1,0 +1,19 @@
+BANKLENS AI CUSTOMER PROFILE REPORT
+===================================
+Persona: Cashflow Stressed
+Health Score: 30/100
+Risk Profile: High Risk
+
+RECOMMENDED PRODUCTS:
+1. Primary Offer: Debt Consolidation Loan
+   Reason: Given the high expense-to-income ratio and cashflow stress, a Debt Consolidation Loan can help restructure existing outlays into a single lower monthly EMI, reducing the risk of default.
+
+2. Secondary Offer: Recurring Deposit
+   Reason: A Recurring Deposit can help the customer build a disciplined savings habit, gradually improving their financial buffer.
+
+TALKING POINTS FOR RM CALL:
+- I noticed that your expenses are quite high relative to your income, particularly in essential categories like Rent and Health.
+- A Debt Consolidation Loan can simplify your monthly payments and reduce financial stress by consolidating your debts into one manageable EMI.
+- Let's discuss how we can set up a Debt Consolidation Loan to ease your cashflow and a Recurring Deposit to start building your savings.
+
+RESOURCES: credit_card.md, recurring_deposit.md, sweep_account.md
