@@ -33,8 +33,7 @@ COPY requirements.txt pyproject.toml ./
 # is importable from anywhere inside the container.
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
-    && /opt/venv/bin/pip install --no-cache-dir -e .
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
@@ -45,6 +44,7 @@ FROM python:3.11-slim AS runtime
 # - PYTHONUNBUFFERED: ensures stdout/stderr are not buffered (important for logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
     PATH="/opt/venv/bin:$PATH"
 
 # Set the working directory for the runtime container
