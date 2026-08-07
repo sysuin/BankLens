@@ -58,6 +58,7 @@ COPY app/ ./app/
 COPY knowledge_base/ ./knowledge_base/
 COPY data/ ./data/
 COPY prompts/ ./prompts/
+COPY .streamlit/ ./.streamlit/
 
 # Streamlit default port
 EXPOSE 8501
@@ -72,4 +73,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 CMD ["streamlit", "run", "app/main.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
-     "--server.fileWatcherType=none"]
+     "--server.fileWatcherType=none", \
+     "--server.maxUploadSize=5"]
