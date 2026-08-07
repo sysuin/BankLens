@@ -2,6 +2,7 @@
 .env
 *.pem
 BankLens.md
+*_summary.txt
 
 # ChromaDB persisted data
 chroma_db/
