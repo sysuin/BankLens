@@ -1,17 +1,157 @@
 date,description,amount,type
-2024-03-01,Monthly Salary Credit,75000,Credit
-2024-03-02,Zomato Gourmet Dining,1850,Debit
-2024-03-03,Netflix Premium Subscription,799,Debit
-2024-03-04,Uber Cab Rides,650,Debit
-2024-03-05,Myntra Spring Fashion Sale,4500,Debit
-2024-03-07,Swiggy Food Delivery,920,Debit
-2024-03-09,Amazon Prime & Shopping,3800,Debit
-2024-03-12,MakeMyTrip Flight Booking,8500,Debit
-2024-03-14,Spotify Annual Family Plan,1799,Debit
-2024-03-15,Starbucks Coffee,480,Debit
-2024-03-18,Nykaa Beauty Purchase,2200,Debit
-2024-03-20,Zomato Weekend Delivery,1150,Debit
-2024-03-22,Ajio Apparel Order,3100,Debit
-2024-03-25,Indigo Airlines Upgrade,2400,Debit
-2024-03-28,Swiggy Instamart Grocery,1650,Debit
-2024-03-30,BookMyShow Movie Tickets,950,Debit
+2024-01-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-01-02,House Rent Payment,25000.0,Debit
+2024-01-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-01-04,Swiggy Food Delivery,1890.0,Debit
+2024-01-06,Uber Premium Cab Ride,1650.0,Debit
+2024-01-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-01-10,Zara Apparel Retail Store,14800.0,Debit
+2024-01-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-01-14,Spotify Music Premium Family,179.0,Debit
+2024-01-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-01-18,Amazon India Shopping Sale,16500.0,Debit
+2024-01-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-01-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-02-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-02-02,House Rent Payment,25000.0,Debit
+2024-02-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-02-04,Swiggy Food Delivery,1890.0,Debit
+2024-02-06,Uber Premium Cab Ride,1650.0,Debit
+2024-02-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-02-10,Zara Apparel Retail Store,14800.0,Debit
+2024-02-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-02-14,Spotify Music Premium Family,179.0,Debit
+2024-02-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-02-18,Amazon India Shopping Sale,16500.0,Debit
+2024-02-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-02-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-03-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-03-02,House Rent Payment,25000.0,Debit
+2024-03-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-03-04,Swiggy Food Delivery,1890.0,Debit
+2024-03-06,Uber Premium Cab Ride,1650.0,Debit
+2024-03-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-03-10,Zara Apparel Retail Store,14800.0,Debit
+2024-03-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-03-14,Spotify Music Premium Family,179.0,Debit
+2024-03-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-03-18,Amazon India Shopping Sale,16500.0,Debit
+2024-03-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-03-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-04-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-04-02,House Rent Payment,25000.0,Debit
+2024-04-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-04-04,Swiggy Food Delivery,1890.0,Debit
+2024-04-06,Uber Premium Cab Ride,1650.0,Debit
+2024-04-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-04-10,Zara Apparel Retail Store,14800.0,Debit
+2024-04-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-04-14,Spotify Music Premium Family,179.0,Debit
+2024-04-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-04-18,Amazon India Shopping Sale,16500.0,Debit
+2024-04-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-04-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-05-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-05-02,House Rent Payment,25000.0,Debit
+2024-05-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-05-04,Swiggy Food Delivery,1890.0,Debit
+2024-05-06,Uber Premium Cab Ride,1650.0,Debit
+2024-05-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-05-10,Zara Apparel Retail Store,14800.0,Debit
+2024-05-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-05-14,Spotify Music Premium Family,179.0,Debit
+2024-05-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-05-18,Amazon India Shopping Sale,16500.0,Debit
+2024-05-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-05-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-06-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-06-02,House Rent Payment,25000.0,Debit
+2024-06-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-06-04,Swiggy Food Delivery,1890.0,Debit
+2024-06-06,Uber Premium Cab Ride,1650.0,Debit
+2024-06-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-06-10,Zara Apparel Retail Store,14800.0,Debit
+2024-06-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-06-14,Spotify Music Premium Family,179.0,Debit
+2024-06-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-06-18,Amazon India Shopping Sale,16500.0,Debit
+2024-06-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-06-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-07-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-07-02,House Rent Payment,25000.0,Debit
+2024-07-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-07-04,Swiggy Food Delivery,1890.0,Debit
+2024-07-06,Uber Premium Cab Ride,1650.0,Debit
+2024-07-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-07-10,Zara Apparel Retail Store,14800.0,Debit
+2024-07-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-07-14,Spotify Music Premium Family,179.0,Debit
+2024-07-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-07-18,Amazon India Shopping Sale,16500.0,Debit
+2024-07-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-07-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-08-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-08-02,House Rent Payment,25000.0,Debit
+2024-08-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-08-04,Swiggy Food Delivery,1890.0,Debit
+2024-08-06,Uber Premium Cab Ride,1650.0,Debit
+2024-08-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-08-10,Zara Apparel Retail Store,14800.0,Debit
+2024-08-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-08-14,Spotify Music Premium Family,179.0,Debit
+2024-08-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-08-18,Amazon India Shopping Sale,16500.0,Debit
+2024-08-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-08-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-09-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-09-02,House Rent Payment,25000.0,Debit
+2024-09-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-09-04,Swiggy Food Delivery,1890.0,Debit
+2024-09-06,Uber Premium Cab Ride,1650.0,Debit
+2024-09-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-09-10,Zara Apparel Retail Store,14800.0,Debit
+2024-09-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-09-14,Spotify Music Premium Family,179.0,Debit
+2024-09-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-09-18,Amazon India Shopping Sale,16500.0,Debit
+2024-09-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-09-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-10-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-10-02,House Rent Payment,25000.0,Debit
+2024-10-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-10-04,Swiggy Food Delivery,1890.0,Debit
+2024-10-06,Uber Premium Cab Ride,1650.0,Debit
+2024-10-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-10-10,Zara Apparel Retail Store,14800.0,Debit
+2024-10-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-10-14,Spotify Music Premium Family,179.0,Debit
+2024-10-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-10-18,Amazon India Shopping Sale,16500.0,Debit
+2024-10-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-10-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-11-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-11-02,House Rent Payment,25000.0,Debit
+2024-11-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-11-04,Swiggy Food Delivery,1890.0,Debit
+2024-11-06,Uber Premium Cab Ride,1650.0,Debit
+2024-11-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-11-10,Zara Apparel Retail Store,14800.0,Debit
+2024-11-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-11-14,Spotify Music Premium Family,179.0,Debit
+2024-11-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-11-18,Amazon India Shopping Sale,16500.0,Debit
+2024-11-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-11-25,Blinkit Midnight Grocery,1850.0,Debit
+2024-12-01,GlobalTech Solutions Salary Credit,95000.0,Credit
+2024-12-02,House Rent Payment,25000.0,Debit
+2024-12-03,Zomato Night Gourmet Order,2450.0,Debit
+2024-12-04,Swiggy Food Delivery,1890.0,Debit
+2024-12-06,Uber Premium Cab Ride,1650.0,Debit
+2024-12-08,Myntra Fashion Online Shopping,9450.0,Debit
+2024-12-10,Zara Apparel Retail Store,14800.0,Debit
+2024-12-12,Netflix 4K Ultra Subscription,799.0,Debit
+2024-12-14,Spotify Music Premium Family,179.0,Debit
+2024-12-16,Starbucks Coffee Lounge,1680.0,Debit
+2024-12-18,Amazon India Shopping Sale,16500.0,Debit
+2024-12-22,MakeMyTrip Flight Booking,6400.0,Debit
+2024-12-25,Blinkit Midnight Grocery,1850.0,Debit

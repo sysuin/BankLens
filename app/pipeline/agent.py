@@ -1,15 +1,11 @@
 """
-LangChain agent for BankLens customer profiling.
+Customer profiling engine for BankLens Enterprise v2.0.
 
-Builds a LangChain chain that:
-    1. Formats a prompt from the customer's financial metrics and the
-       RAG-retrieved product context
-    2. Calls OpenAI GPT-4o with temperature=0.2 for consistent output
-    3. Parses the response into a validated CustomerProfile Pydantic model
-
-Using PydanticOutputParser ensures the LLM output always matches the
-expected schema. If the model returns malformed JSON, LangChain raises
-a descriptive error rather than silently failing downstream.
+Builds a structured CustomerProfile using:
+    1. Grounded RAG context & financial health metrics
+    2. Indirect Prompt Injection Defense via XML boundary encapsulation
+    3. OpenAI GPT-4o with temperature=0.2 for deterministic precision
+    4. Pydantic Output Guardrail Parsing (CustomerProfile schema)
 """
 
 from pathlib import Path
@@ -26,7 +22,7 @@ from app.pipeline.analyzer import FinancialMetrics
 
 logger = get_logger(__name__)
 
-# Path to the system prompt file — loaded once at module import time
+# Path to the system prompt file
 SYSTEM_PROMPT_PATH = (
     Path(__file__).resolve().parent.parent.parent / "prompts" / "system_prompt.txt"
 )
@@ -37,7 +33,7 @@ SYSTEM_PROMPT_PATH = (
 
 class CustomerProfile(BaseModel):
     """
-    Structured analytical output produced by the LangChain agent.
+    Structured analytical output produced by the AI profiling engine.
 
     Every field is grounded in the customer's actual transaction data
     and the RAG-retrieved banking product context.
@@ -88,7 +84,8 @@ class CustomerProfile(BaseModel):
     )
 
     retrieved_sources: list[str] = Field(
-        description="List of knowledge base filenames retrieved for this recommendation."
+        default_factory=list,
+        description="List of knowledge base filenames retrieved for this recommendation.",
     )
 
     @property
@@ -114,7 +111,7 @@ def build_profile(
     metrics: FinancialMetrics,
     retrieved_chunks: list[dict],
 ) -> CustomerProfile:
-    """Generate a structured CustomerProfile using GPT-4o and RAG context."""
+    """Generate a structured CustomerProfile using GPT-4o, prompt injection defense, and RAG context."""
     if not SYSTEM_PROMPT_PATH.exists():
         raise FileNotFoundError(f"System prompt not found at: {SYSTEM_PROMPT_PATH}")
 
@@ -132,26 +129,36 @@ def build_profile(
             ("system", system_prompt + "\n\n{format_instructions}"),
             (
                 "human",
-                "## Customer Financial Metrics\n\n"
-                "{metrics}\n\n"
-                "## Retrieved Banking Product Context\n\n"
-                "{rag_context}\n\n"
-                "## Available Source Documents\n\n"
+                "<customer_metrics>\n"
+                "{metrics}\n"
+                "</customer_metrics>\n\n"
+                "<rag_context>\n"
+                "{rag_context}\n"
+                "</rag_context>\n\n"
+                "## Available Source Documents\n"
                 "{sources}",
             ),
         ]
     )
 
-    llm = ChatOpenAI(
+    primary_llm = ChatOpenAI(
         model=settings.openai_model,
         temperature=0.2,
-        openai_api_key=settings.openai_api_key,
+        openai_api_key=settings.openai_api_key or "dummy_key",
     )
 
+    backup_llm = ChatOpenAI(
+        model=settings.openai_mini_model,
+        temperature=0.2,
+        openai_api_key=settings.openai_api_key or "dummy_key",
+    )
+
+    # Attach fallback to handle transient API downtime
+    llm = primary_llm.with_fallbacks([backup_llm])
     chain = prompt | llm | parser
 
     logger.info(
-        "Invoking %s | RAG chunks: %d | Sources: %s",
+        "Invoking Profiling Pipeline (%s) | RAG chunks: %d | Sources: %s",
         settings.openai_model,
         len(retrieved_chunks),
         source_filenames,

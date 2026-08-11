@@ -1,26 +1,17 @@
 """
-Financial metrics computation for BankLens.
+Financial health metrics analyzer for BankLens.
 
-Reads the categorized transactions DataFrame and computes a set of
-financial health indicators. The output is a validated Pydantic model
-so downstream components (RAG query builder, LLM agent) can rely on
-the data types being correct.
-
-Metrics computed:
-    total_income             — sum of all Credit rows
-    total_expenses           — sum of all Debit rows
-    savings_amount           — income minus expenses
-    savings_rate_pct         — savings as a percentage of income
-    expense_to_income_ratio  — expenses divided by income
-    top_categories           — top 3 debit categories by amount spent
-    transaction_count        — total number of rows in the statement
-    credit_count             — number of Credit transactions
-    debit_count              — number of Debit transactions
-    period                   — date range covered by the statement
+Computes core banking financial health KPIs from a transactions DataFrame:
+    - Total Income (sum of Credit transactions)
+    - Total Expenses (sum of Debit transactions excluding internal Savings transfers)
+    - Savings Amount (Total Income - Total Expenses)
+    - Savings Rate % (Savings Amount / Total Income * 100)
+    - Expense-to-Income Ratio (Total Expenses / Total Income)
+    - Top 3 Spending Categories (by total debit outlay)
+    - Period covered by statement (e.g. '2024-01 to 2024-12')
 """
 
 from typing import Any
-
 import pandas as pd
 from pydantic import BaseModel
 
@@ -29,14 +20,13 @@ from app.core.logger import get_logger
 logger = get_logger(__name__)
 
 
-# ── Output Model ─────────────────────────────────────────────────────────────
+# ── Output Data Model ─────────────────────────────────────────────────────────
 
 
 class FinancialMetrics(BaseModel):
     """
-    Validated financial metrics derived from a customer's bank statement.
+    Validated financial metrics container passed downstream to RAG and LLM.
 
-    All monetary amounts are in the same currency unit as the input CSV.
     Percentage fields are expressed on a 0–100 scale (e.g. 35.5 means 35.5%).
     """
 
@@ -91,13 +81,19 @@ def compute_metrics(df: pd.DataFrame) -> FinancialMetrics:
         raise ValueError("The uploaded CSV contains no transactions.")
 
     # ── Split credits and debits ──────────────────────────────────────────────
-    # Normalise the 'type' column to lowercase for safe comparison
     type_lower = df["type"].str.strip().str.lower()
     credits = df[type_lower == "credit"]
     debits = df[type_lower == "debit"]
 
     total_income = float(credits["amount"].sum())
-    total_expenses = float(debits["amount"].sum())
+
+    # Exclude internal savings/investment outlays from consumption expenses
+    consumption_debits = debits[debits["category"] != "Savings"]
+    total_expenses = (
+        float(consumption_debits["amount"].sum())
+        if not consumption_debits.empty
+        else float(debits["amount"].sum())
+    )
     savings_amount = total_income - total_expenses
 
     # Avoid division by zero for edge cases (e.g. statement with no income)
@@ -109,7 +105,6 @@ def compute_metrics(df: pd.DataFrame) -> FinancialMetrics:
         expense_to_income_ratio = 0.0
 
     # ── Top 3 spending categories ─────────────────────────────────────────────
-    # Group all Debit rows by category and sum the amounts
     category_totals = (
         debits.groupby("category")["amount"]
         .sum()
@@ -121,16 +116,16 @@ def compute_metrics(df: pd.DataFrame) -> FinancialMetrics:
     top_categories: list[dict[str, Any]] = category_totals.to_dict(orient="records")
 
     # ── Determine the period covered by the statement ─────────────────────────
-    df = df.copy()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    min_month = df["date"].min().strftime("%Y-%m")
-    max_month = df["date"].max().strftime("%Y-%m")
+    df_temp = df.copy()
+    df_temp["date"] = pd.to_datetime(df_temp["date"], errors="coerce")
+    min_month = df_temp["date"].min().strftime("%Y-%m")
+    max_month = df_temp["date"].max().strftime("%Y-%m")
     period = min_month if min_month == max_month else f"{min_month} to {max_month}"
 
     metrics = FinancialMetrics(
-        total_income=round(total_income, 2),
-        total_expenses=round(total_expenses, 2),
-        savings_amount=round(savings_amount, 2),
+        total_income=total_income,
+        total_expenses=total_expenses,
+        savings_amount=savings_amount,
         savings_rate_pct=savings_rate_pct,
         expense_to_income_ratio=expense_to_income_ratio,
         top_categories=top_categories,
@@ -143,10 +138,10 @@ def compute_metrics(df: pd.DataFrame) -> FinancialMetrics:
     logger.info(
         "Metrics computed | Period: %s | Income: %.2f | Expenses: %.2f | "
         "Savings Rate: %.2f%% | Expense Ratio: %.4f",
-        metrics.period,
-        metrics.total_income,
-        metrics.total_expenses,
-        metrics.savings_rate_pct,
-        metrics.expense_to_income_ratio,
+        period,
+        total_income,
+        total_expenses,
+        savings_rate_pct,
+        expense_to_income_ratio,
     )
     return metrics
