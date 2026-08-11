@@ -2,37 +2,48 @@
 NLP transaction categorizer for BankLens.
 
 Maps raw transaction descriptions to human-readable spending categories
-using a keyword dictionary. This approach is:
+using a 2-Stage Hybrid Approach:
 
-    - Fast: no external model, no API call, runs instantly
-    - Transparent: the category assignment is fully explainable
-    - Extensible: add new keywords by editing KEYWORD_MAP
+    - Stage 1 (Rules): Fast keyword matching against KEYWORD_MAP (instant, 0 cost).
+    - Stage 2 (LLM Fallback): Batch LLM classification for any items assigned "Others",
+      eliminating the fragile fallback bucket and handling regional/messy merchant names.
 
 Supported categories:
-    Income         — salary, freelance payments, interest, refunds
-    Rent & Housing — house rent, apartment maintenance, society fees
-    Education      — school fees, college tuition, coaching
-    Food           — restaurants, food delivery, grocery stores
-    Transport      — cabs, fuel, metro, flights, car repair
-    Utilities      — electricity, internet, gas cylinder, mobile bills
-    Subscriptions  — streaming, SaaS tools, memberships
-    Health         — pharmacy, hospital, insurance, diagnostics
-    Shopping       — e-commerce, retail, apparel
-    Savings        — FD transfers, SIP, mutual funds, RD
-    Others         — anything that does not match a keyword
+    Income, Rent & Housing, Education, Food, Transport, Utilities,
+    Subscriptions, Health, Shopping, Savings, Others
 """
 
+import json
 import pandas as pd
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 
+from app.core.config import settings
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Keyword Dictionary ────────────────────────────────────────────────────────
+# ── Keyword Dictionary (Order-independent matching with strict phrases) ────────
 KEYWORD_MAP: dict[str, list[str]] = {
+    "Savings": [
+        "fixed deposit",
+        "fd opening",
+        "sip equity",
+        "sip mutual",
+        "mutual fund",
+        "ppf deposit",
+        "provident fund",
+        "recurring deposit",
+        "savings transfer",
+        "investment",
+        "nps",
+        "fd auto transfer",
+        "auto transfer to fd",
+        "auto transfer",
+    ],
     "Income": [
         "salary",
-        "credit",
+        "inflow credit",
         "freelance",
         "payment received",
         "transfer in",
@@ -51,6 +62,7 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "lease",
         "apartment",
         "society fee",
+        "society maintenance",
         "landlord",
     ],
     "Education": [
@@ -97,7 +109,9 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "parking",
         "toll",
         "cab",
-        "auto",
+        "auto ride",
+        "auto cab",
+        "auto rickshaw",
         "bus",
         "flight",
         "airline",
@@ -109,6 +123,7 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "car repair",
         "service station",
         "mechanic",
+        "workshop service",
         "repair",
     ],
     "Utilities": [
@@ -183,44 +198,77 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "footwear",
         "apparel",
     ],
-    "Savings": [
-        "savings transfer",
-        "fixed deposit",
-        "mutual fund",
-        "sip",
-        "ppf",
-        "nps",
-        "recurring deposit",
-        "transfer to savings",
-        "fd opening",
-        "rd installment",
-        "investment",
-    ],
 }
 
 
 def categorize(description: str) -> str:
-    """Assign a spending category to a single transaction description."""
-    normalized = description.lower().strip()
+    """Assign a spending category to a single transaction description via rule matching."""
+    normalized = str(description).lower().strip()
 
     for category, keywords in KEYWORD_MAP.items():
         for keyword in keywords:
             if keyword in normalized:
-                logger.debug(
-                    "Matched '%s' → %s (keyword: '%s')",
-                    description,
-                    category,
-                    keyword,
-                )
                 return category
 
-    logger.debug("No keyword match for '%s' → Others", description)
     return "Others"
 
 
+def batch_llm_categorize_others(
+    uncategorized_descriptions: list[str],
+) -> dict[str, str]:
+    """
+    Stage 2: Batch LLM classification for items assigned 'Others'.
+    Returns a dictionary mapping description -> category.
+    """
+    if not uncategorized_descriptions or not settings.openai_api_key:
+        return {desc: "Others" for desc in uncategorized_descriptions}
+
+    try:
+        categories_list = list(KEYWORD_MAP.keys()) + ["Others"]
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a financial transaction classification engine. Classify each merchant/description into one of these exact categories: "
+                    f"{categories_list}. Output JSON format mapping description to category. Return JSON only.",
+                ),
+                ("human", "Classify these transaction descriptions: {descriptions}"),
+            ]
+        )
+        llm = ChatOpenAI(
+            model=settings.openai_mini_model,
+            temperature=0.0,
+            openai_api_key=settings.openai_api_key,
+        )
+        chain = prompt | llm
+        res = chain.invoke({"descriptions": json.dumps(uncategorized_descriptions)})
+        content = res.content.strip()
+        if content.startswith("```json"):
+            content = content.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(content)
+        logger.info("Stage 2 LLM categorizer classified %d transactions.", len(parsed))
+        return parsed
+    except Exception as e:
+        logger.warning("Stage 2 LLM categorization failed, using default: %s", e)
+        return {desc: "Others" for desc in uncategorized_descriptions}
+
+
 def categorize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply categorize() to every row of the transactions DataFrame."""
+    """Apply 2-Stage Hybrid Categorization to every row of the transactions DataFrame."""
     result = df.copy()
+
+    # Stage 1: Rule-based matching
     result["category"] = result["description"].apply(categorize)
-    logger.info("Categorized %d transactions.", len(result))
+
+    # Stage 2: LLM Fallback for 'Others'
+    others_mask = result["category"] == "Others"
+    others_descs = result.loc[others_mask, "description"].unique().tolist()
+
+    if others_descs and settings.openai_api_key:
+        llm_mapped = batch_llm_categorize_others(others_descs)
+        result.loc[others_mask, "category"] = result.loc[
+            others_mask, "description"
+        ].map(lambda d: llm_mapped.get(d, "Others"))
+
+    logger.info("Categorized %d transactions (2-stage hybrid).", len(result))
     return result

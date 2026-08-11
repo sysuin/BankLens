@@ -20,13 +20,23 @@ class Settings(BaseSettings):
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     # Required: your OpenAI API key — set via OPENAI_API_KEY in .env
-    openai_api_key: str
+    openai_api_key: str = ""
 
     # LLM model used for profile generation (GPT-4o gives the best JSON output)
     openai_model: str = "gpt-4o"
+    openai_mini_model: str = "gpt-4o-mini"
 
     # Embedding model — text-embedding-3-small is fast and cost-effective
     openai_embedding_model: str = "text-embedding-3-small"
+
+    # ── Google Gemini (Optional Free Provider) ─────────────────────────────
+    google_api_key: str = ""
+    google_model: str = "gemini-1.5-flash"
+
+    # ── LangSmith Tracing (Optional) ───────────────────────────────────────
+    langchain_tracing_v2: str = "false"
+    langchain_api_key: str = ""
+    langchain_project: str = "BankLens"
 
     # ── ChromaDB ──────────────────────────────────────────────────────────────
     # Local directory where ChromaDB persists its index between runs
