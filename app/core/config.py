@@ -75,17 +75,17 @@ class Settings(BaseSettings):
     # "none"          — skip reranking and use the fusion order directly.
     #
     # Defaults to "none" on the evidence, not on principle. Measured over the 65
-    # golden queries (evals/retrieval.py, `--retrieval-ab`), LLM reranking
-    # improves ordering — nDCG +0.095, MRR +0.054, precision +0.062 — but
-    # regresses the two things that matter more here:
+    # golden queries at the shipped retrieval_k of 4 (evals/retrieval.py,
+    # `--retrieval-ab`), LLM reranking improves ordering — nDCG +0.061, MRR
+    # +0.054, precision +0.065 — but regresses the two things that matter more:
     #
     #   hit rate  1.000 -> 0.923   it discards the relevant document outright
     #                              on ~8% of queries fusion got right
-    #   harmful   0.400 -> 0.554   averaged over all queries; concentrated in
+    #   harmful   0.400 -> 0.908   averaged over all queries; concentrated in
     #                              the 26 cashflow-deficit cases that is 1.0 ->
-    #                              1.38 chunks per at-risk customer, so credit
+    #                              2.3 chunks per at-risk customer, so credit
     #                              card and personal loan content grows from a
-    #                              third to nearly half of their context window
+    #                              quarter to over half of their context window
     #
     # Feeding more unsecured-credit material to customers already in deficit is
     # the exact failure the credit guardrail exists to prevent. The prompt-level
