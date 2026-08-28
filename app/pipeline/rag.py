@@ -12,6 +12,7 @@ Handles the full retrieval-augmented generation workflow:
                   dense semantic search and sparse lexical keyword search
 """
 
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -24,6 +25,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.pipeline.reranker import rerank
 
 logger = get_logger(__name__)
 
@@ -32,6 +34,10 @@ KNOWLEDGE_BASE_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge_
 
 # Global module cache for BM25 retriever to avoid re-reading files on every query
 _CACHED_BM25_RETRIEVER = None
+
+# Written inside the persist directory alongside the Chroma index. Records what
+# the index was built from, so a stale one can be detected on the next startup.
+INDEX_FINGERPRINT_FILE = ".kb_fingerprint"
 
 
 # ── Step 1: Load ─────────────────────────────────────────────────────────────
@@ -87,6 +93,67 @@ def _chunk_documents(documents: list) -> list:
     return chunks
 
 
+# ── Index Freshness ───────────────────────────────────────────────────────────
+#
+# A persisted index is only reusable if it was built from the same inputs. It
+# loads without error whether or not the knowledge base has moved on, so
+# "loads successfully" is not the same as "is correct" — a new product document
+# would simply never appear in dense results, silently and indefinitely.
+#
+# BM25 is rebuilt from disk on every startup, so it would see the new document
+# while the dense half did not. Fusion would still return *something*, which is
+# what makes this worth detecting explicitly rather than trusting to look wrong.
+
+
+def compute_kb_fingerprint() -> str:
+    """
+    Hash everything the persisted index depends on.
+
+    Covers the knowledge base contents and the parameters that determine how
+    those contents become vectors. Any change to chunking or the embedding
+    model invalidates an existing index just as surely as editing a document
+    does, so all three go into the same hash.
+    """
+    digest = hashlib.sha256()
+
+    for md_file in sorted(KNOWLEDGE_BASE_DIR.glob("*.md")):
+        digest.update(md_file.name.encode("utf-8"))
+        digest.update(md_file.read_bytes())
+
+    digest.update(
+        f"{settings.chunk_size}|{settings.chunk_overlap}|"
+        f"{settings.openai_embedding_model}".encode("utf-8")
+    )
+
+    return digest.hexdigest()
+
+
+def read_stored_fingerprint(persist_dir: str) -> str | None:
+    """Read the fingerprint recorded when the index was built, if any."""
+    path = Path(persist_dir) / INDEX_FINGERPRINT_FILE
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def write_fingerprint(persist_dir: str, fingerprint: str) -> None:
+    """
+    Record the fingerprint of the inputs an index was just built from.
+
+    Never fatal: an index that works but cannot be verified next startup is a
+    far better outcome than refusing to serve because a marker file could not
+    be written.
+    """
+    try:
+        Path(persist_dir).mkdir(parents=True, exist_ok=True)
+        (Path(persist_dir) / INDEX_FINGERPRINT_FILE).write_text(
+            fingerprint, encoding="utf-8"
+        )
+    except OSError as e:
+        logger.warning("Could not write index fingerprint to '%s': %s", persist_dir, e)
+
+
 # ── Steps 3–4: Embed and Persist Vector Store & BM25 Cache ──────────────────
 
 
@@ -106,54 +173,79 @@ def get_cached_bm25_retriever() -> BM25Retriever | None:
     return _CACHED_BM25_RETRIEVER
 
 
+def _rebuild_vector_store(
+    persist_dir: str, embeddings: OpenAIEmbeddings, fingerprint: str
+) -> Chroma:
+    """Discard any existing index and rebuild it from the knowledge base."""
+    shutil.rmtree(persist_dir, ignore_errors=True)
+
+    documents = _load_documents()
+    chunks = _chunk_documents(documents)
+    vector_store = Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        collection_name=settings.chroma_collection_name,
+        persist_directory=persist_dir,
+    )
+
+    write_fingerprint(persist_dir, fingerprint)
+    logger.info("ChromaDB built and persisted at '%s'.", persist_dir)
+    return vector_store
+
+
 def build_vector_store() -> Chroma:
-    """Build or load the ChromaDB vector store with self-healing fallback."""
+    """
+    Build or load the ChromaDB vector store.
+
+    An existing index is reused only when its fingerprint matches the current
+    knowledge base and indexing settings. It is rebuilt when the inputs have
+    changed, when it was built before fingerprinting existed, or when it fails
+    to load at all.
+    """
     embeddings = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
         openai_api_key=settings.openai_api_key or "dummy_key",
     )
 
     persist_dir = settings.chroma_persist_dir
+    fingerprint = compute_kb_fingerprint()
 
-    if os.path.exists(persist_dir) and os.listdir(persist_dir):
-        logger.info(
-            "Persisted ChromaDB found at '%s'. Loading existing index.", persist_dir
-        )
-        try:
-            vector_store = Chroma(
-                collection_name=settings.chroma_collection_name,
-                embedding_function=embeddings,
-                persist_directory=persist_dir,
-            )
-        except Exception as e:
-            logger.warning(
-                "Persisted ChromaDB index incompatible or corrupted (%s). Self-healing and rebuilding.",
-                e,
-            )
-            shutil.rmtree(persist_dir, ignore_errors=True)
-            documents = _load_documents()
-            chunks = _chunk_documents(documents)
-            vector_store = Chroma.from_documents(
-                documents=chunks,
-                embedding=embeddings,
-                collection_name=settings.chroma_collection_name,
-                persist_directory=persist_dir,
-            )
-    else:
+    if not (os.path.exists(persist_dir) and os.listdir(persist_dir)):
         logger.info("No persisted index found. Building ChromaDB from knowledge base.")
-        documents = _load_documents()
-        chunks = _chunk_documents(documents)
-        vector_store = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
+        return _finalize(_rebuild_vector_store(persist_dir, embeddings, fingerprint))
+
+    stored = read_stored_fingerprint(persist_dir)
+    if stored != fingerprint:
+        logger.info(
+            "Persisted index at '%s' is stale (%s). Rebuilding from knowledge base.",
+            persist_dir,
+            "no fingerprint recorded" if stored is None else "knowledge base changed",
+        )
+        return _finalize(_rebuild_vector_store(persist_dir, embeddings, fingerprint))
+
+    logger.info(
+        "Persisted ChromaDB found at '%s' and fingerprint matches. Loading existing index.",
+        persist_dir,
+    )
+    try:
+        vector_store = Chroma(
             collection_name=settings.chroma_collection_name,
+            embedding_function=embeddings,
             persist_directory=persist_dir,
         )
-        logger.info("ChromaDB built and persisted at '%s'.", persist_dir)
+    except Exception as e:
+        logger.warning(
+            "Persisted ChromaDB index incompatible or corrupted (%s). Self-healing and rebuilding.",
+            e,
+        )
+        vector_store = _rebuild_vector_store(persist_dir, embeddings, fingerprint)
 
-    # Warm up BM25 cache at startup
+    return _finalize(vector_store)
+
+
+def _finalize(vector_store: Chroma) -> Chroma:
+    """Warm the BM25 cache at startup so the first query is not slow."""
     get_cached_bm25_retriever()
-
     return vector_store
 
 
@@ -179,42 +271,96 @@ def reciprocal_rank_fusion(dense_docs: list, bm25_docs: list, k: int = 4) -> lis
     return [doc_map[doc_id] for doc_id in sorted_doc_ids[:k]]
 
 
-def retrieve(query: str, vector_store: Chroma) -> list[dict]:
+def build_retrieval_query(metrics) -> str:
     """
-    Fast RRF Hybrid Search using cached BM25 and ChromaDB.
+    Render computed metrics into the natural language retrieval query.
+
+    Defined once and shared by the app and the evaluation harness. If the evals
+    built their own query string, they would be measuring a retrieval path that
+    does not exist in production — a quietly useless eval.
+
+    Args:
+        metrics: A FinancialMetrics instance.
     """
+    categories = ", ".join(c["category"] for c in metrics.top_categories)
+    return (
+        f"Customer with monthly income {metrics.total_income:,.0f}, "
+        f"expenses {metrics.total_expenses:,.0f}, "
+        f"savings rate {metrics.savings_rate_pct:.1f}%, "
+        f"expense-to-income ratio {metrics.expense_to_income_ratio:.2f}, "
+        f"credit risk {metrics.risk_profile}. "
+        f"Top spending categories: {categories}."
+    )
+
+
+def retrieve(
+    query: str,
+    vector_store: Chroma,
+    use_reranker: bool = True,
+) -> list[dict]:
+    """
+    Retrieve product context: hybrid fusion over a wide candidate pool, then rerank.
+
+    Both retrievers are asked for retrieval_candidate_k results rather than the
+    final retrieval_k. Fusion is used to assemble candidates, not to choose the
+    final passages — that is the reranker's job.
+
+    Args:
+        query: Natural language summary of the customer's financial position.
+        vector_store: The Chroma collection holding product embeddings.
+        use_reranker: Set False to get the raw fusion ordering. Used by the
+                      retrieval evaluation to measure the reranker's effect.
+
+    Returns:
+        Up to retrieval_k chunks as {"content": ..., "source": ...}.
+    """
+    candidate_k = max(settings.retrieval_candidate_k, settings.retrieval_k)
+
     dense_retriever = vector_store.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": settings.retrieval_k},
+        search_kwargs={"k": candidate_k},
     )
 
     bm25 = get_cached_bm25_retriever()
     if bm25 is not None:
         try:
-            dense_docs = dense_retriever.invoke(query)
-            bm25_docs = bm25.invoke(query)
-            results = reciprocal_rank_fusion(
-                dense_docs, bm25_docs, k=settings.retrieval_k
+            original_bm25_k = bm25.k
+            bm25.k = candidate_k
+            try:
+                dense_docs = dense_retriever.invoke(query)
+                bm25_docs = bm25.invoke(query)
+            finally:
+                bm25.k = original_bm25_k
+
+            results = reciprocal_rank_fusion(dense_docs, bm25_docs, k=candidate_k)
+            logger.info(
+                "Executed RRF hybrid search over %d candidates (Dense + Cached BM25).",
+                len(results),
             )
-            logger.info("Executed Fast RRF Hybrid Search (Dense + Cached BM25).")
         except Exception as e:
             logger.warning("BM25 retrieval error, fallback to Dense search: %s", e)
             results = dense_retriever.invoke(query)
     else:
         results = dense_retriever.invoke(query)
 
-    retrieved = [
+    candidates = [
         {
             "content": doc.page_content,
             "source": doc.metadata.get("source", "unknown"),
         }
-        for doc in results[: settings.retrieval_k]
+        for doc in results[:candidate_k]
     ]
+
+    if use_reranker:
+        retrieved = rerank(query, candidates, top_k=settings.retrieval_k)
+    else:
+        retrieved = candidates[: settings.retrieval_k]
 
     sources = [r["source"] for r in retrieved]
     logger.info(
-        "Retrieved %d chunks from Hybrid RAG. Sources: %s",
+        "Retrieved %d chunks from %d candidates. Sources: %s",
         len(retrieved),
+        len(candidates),
         sources,
     )
     return retrieved

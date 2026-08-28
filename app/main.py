@@ -24,7 +24,7 @@ from app.pipeline.analyzer import compute_metrics
 from app.pipeline.categorizer import categorize_dataframe
 from app.pipeline.pdf_parser import parse_pdf_statement
 from app.pipeline.sanitizer import sanitize_dataframe
-from app.pipeline.rag import build_vector_store, retrieve
+from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
 from app.pipeline.agent import build_profile, CustomerProfile
 from app.ui.charts import render_income_vs_expense, render_spending_by_category
 from app.ui.components import (
@@ -111,15 +111,9 @@ def run_ai_pipeline(metrics, categorized_df) -> CustomerProfile | None:
         )
         try:
             vector_store = get_vector_store()
-            query = (
-                f"Customer with monthly income ₹{metrics.total_income:,.0f}, "
-                f"expenses ₹{metrics.total_expenses:,.0f}, "
-                f"savings rate {metrics.savings_rate_pct:.1f}%, "
-                f"expense-to-income ratio {metrics.expense_to_income_ratio:.2f}. "
-                f"Top spending categories: "
-                f"{', '.join(c['category'] for c in metrics.top_categories)}."
-            )
-            retrieved_chunks = retrieve(query, vector_store)
+            # Query construction lives in rag.py so the evaluation harness
+            # measures the same retrieval path this screen uses.
+            retrieved_chunks = retrieve(build_retrieval_query(metrics), vector_store)
             sources = [c["source"] for c in retrieved_chunks]
             st.write(
                 f"   * ✅ Retrieved **{len(retrieved_chunks)} Hybrid RAG chunks** from sources: `{sources}`"
