@@ -206,6 +206,10 @@ def _derived_figures(metrics: FinancialMetrics) -> str:
         f"expense_to_income_ratio = {metrics.expense_to_income_ratio:.4f}"
         f" = {metrics.expense_to_income_ratio * 100:.2f}% of income spent",
         f"share_of_income_saved = {metrics.savings_rate_pct:.2f}%",
+        f"essential_expenses = {metrics.essential_expenses:,.2f}",
+        f"discretionary_expenses = {metrics.discretionary_expenses:,.2f}",
+        f"unclassified_expenses = {metrics.unclassified_expenses:,.2f}"
+        " (category 'Others'; neither essential nor discretionary)",
         f"cashflow_negative = {metrics.is_cashflow_negative}",
         f"financial_health_score = {metrics.financial_health_score}",
         "top spending categories (exact totals):",
