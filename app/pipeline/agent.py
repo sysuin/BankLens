@@ -104,7 +104,18 @@ def resolve_product(name: str) -> str | None:
     if not candidate:
         return None
 
-    best_file, best_score = None, 0.0
+    # Ranked on (score, coverage). Score alone ties more often than it looks:
+    # "Sweep-In Fixed Deposit" scores 1.0 against both fixed_deposit.md, whose
+    # whole alias it contains, and sweep_account.md, whose H1 is literally
+    # "Sweep-In Fixed Deposit (Sweep Account)". A strict > comparison then
+    # settled it alphabetically and picked the wrong document.
+    #
+    # Coverage — the share of the *proposed name* the alias accounts for —
+    # breaks that tie toward the document that leaves nothing unexplained.
+    # fixed_deposit.md covers 2 of 3 tokens and ignores "sweep"; sweep_account
+    # covers all 3. Score stays primary so a verbose but correct name like
+    # "Systematic Investment Plan" still resolves against a longer alias.
+    best_file, best_rank = None, (0.0, 0.0)
 
     for filename, aliases in get_product_catalogue().items():
         for alias in aliases:
@@ -112,10 +123,11 @@ def resolve_product(name: str) -> str | None:
             if not shared:
                 continue
             score = max(shared / len(alias), shared / len(candidate))
-            if score > best_score:
-                best_file, best_score = filename, score
+            rank = (score, shared / len(candidate))
+            if rank > best_rank:
+                best_file, best_rank = filename, rank
 
-    return best_file if best_score >= _PRODUCT_MATCH_THRESHOLD else None
+    return best_file if best_rank[0] >= _PRODUCT_MATCH_THRESHOLD else None
 
 
 def _validate_product_name(value: str) -> str:
