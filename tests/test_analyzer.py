@@ -12,7 +12,12 @@ Tests verify that:
 import pandas as pd
 import pytest
 
-from app.pipeline.analyzer import compute_metrics, FinancialMetrics
+from app.pipeline.analyzer import (
+    compute_metrics,
+    compute_risk_profile,
+    compute_health_score,
+    FinancialMetrics,
+)
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -156,3 +161,75 @@ class TestComputeMetricsEdgeCases:
         assert result.total_income == 0.0
         assert result.savings_rate_pct == 0.0
         assert result.expense_to_income_ratio == 0.0
+
+
+# ── Tests: deterministic risk banding and health score ────────────────────────
+
+
+class TestRiskProfileBanding:
+    """compute_risk_profile() must be a pure, monotone function of savings rate."""
+
+    @pytest.mark.parametrize(
+        "savings_rate,expected",
+        [
+            (75.75, "Low"),  # reference archetype: disciplined saver
+            (30.0, "Low"),  # lower boundary of Low, inclusive
+            (29.99, "Medium"),
+            (13.0, "Medium"),  # reference archetype: solvent but stretched
+            (10.0, "Medium"),  # lower boundary of Medium, inclusive
+            (9.99, "High"),
+            (0.0, "High"),
+            (-46.4, "High"),  # reference archetype: cashflow deficit
+        ],
+    )
+    def test_bands(self, savings_rate, expected):
+        assert compute_risk_profile(savings_rate) == expected
+
+    def test_banding_is_monotone(self):
+        """A customer who saves more must never be rated riskier."""
+        order = {"High": 0, "Medium": 1, "Low": 2}
+        rates = [r / 2 for r in range(-120, 200)]
+        ranks = [order[compute_risk_profile(r)] for r in rates]
+        assert ranks == sorted(ranks)
+
+
+class TestHealthScore:
+    """compute_health_score() must stay in range, stay monotone, and stay calibrated."""
+
+    @pytest.mark.parametrize(
+        "savings_rate", [-500.0, -50.0, 0.0, 13.0, 75.75, 100.0, 900.0]
+    )
+    def test_score_is_always_in_range(self, savings_rate):
+        assert 0 <= compute_health_score(savings_rate) <= 100
+
+    def test_score_is_monotone(self):
+        rates = [r / 2 for r in range(-120, 240)]
+        scores = [compute_health_score(r) for r in rates]
+        assert scores == sorted(scores)
+
+    @pytest.mark.parametrize(
+        "savings_rate,low,high",
+        [
+            (75.75, 85, 95),  # documented band for a high saver
+            (13.0, 65, 80),  # documented band for an active spender
+            (-46.4, 25, 45),  # documented band for a stressed customer
+        ],
+    )
+    def test_reference_archetypes_land_in_documented_bands(
+        self, savings_rate, low, high
+    ):
+        assert low <= compute_health_score(savings_rate) <= high
+
+
+class TestMetricsCarryRiskFields:
+    """compute_metrics() must populate the computed risk fields."""
+
+    def test_metrics_include_risk_and_score(self, standard_df):
+        metrics = compute_metrics(standard_df)
+        assert metrics.risk_profile in {"Low", "Medium", "High"}
+        assert 0 <= metrics.financial_health_score <= 100
+        assert metrics.risk_profile == compute_risk_profile(metrics.savings_rate_pct)
+
+    def test_cashflow_negative_flag_tracks_savings_amount(self, standard_df):
+        metrics = compute_metrics(standard_df)
+        assert metrics.is_cashflow_negative == (metrics.savings_amount < 0)
