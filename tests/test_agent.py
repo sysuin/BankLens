@@ -84,6 +84,38 @@ class TestProductCatalogue:
         """Plausible-sounding inventions must not resolve to a real product."""
         assert resolve_product(name) is None
 
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            # The regression: sweep_account.md is titled "Sweep-In Fixed
+            # Deposit (Sweep Account)", so this name scores 1.0 against it and
+            # against fixed_deposit.md, whose alias it also fully contains.
+            # The tie used to be settled alphabetically, sending it to the
+            # wrong document while still resolving to something — which is why
+            # an is-not-None assertion never caught it.
+            ("Sweep-In Fixed Deposit", "sweep_account.md"),
+            ("Sweep Account", "sweep_account.md"),
+            ("Fixed Deposit", "fixed_deposit.md"),
+            ("Fixed Deposit (FD)", "fixed_deposit.md"),
+            ("Recurring Deposit", "recurring_deposit.md"),
+            ("High-Yield Savings Account", "savings_account.md"),
+            ("Systematic Investment Plan", "mutual_funds_sip.md"),
+            ("Home Loan", "home_loan_mortgage.md"),
+            ("Personal Loan", "personal_loan.md"),
+            ("Debt Consolidation Loan", "debt_consolidation_loan.md"),
+            ("Credit Card", "credit_card.md"),
+        ],
+    )
+    def test_products_resolve_to_the_right_document(self, name, expected):
+        """
+        Resolving to *a* product is not enough; it must be the right one.
+
+        check_credit_guardrail decides whether a forbidden product was
+        recommended by resolving the name, so a plausible mis-resolution would
+        make a safety check answer the wrong question.
+        """
+        assert resolve_product(name) == expected
+
 
 class TestProfileNarrativeValidation:
     """Semantic validation of the LLM's output."""
