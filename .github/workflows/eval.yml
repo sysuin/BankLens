@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BankLens — Evaluation Pipeline
+#
+# Deliberately separate from ci_cd.yml. Layer 1 of the eval suite is free and
+# already runs inside the normal pytest job on every push. This workflow runs
+# the layer that costs money: it generates real profiles against the OpenAI API
+# and scores them, including LLM-as-judge groundedness.
+#
+# Running that on every push would burn credits on every README typo, so it is
+# triggered only when something that can actually change output quality changes
+# — the prompt, the pipeline, the knowledge base, or the eval suite itself —
+# plus a nightly run and a manual button.
+#
+# Required secret: OPENAI_API_KEY
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: BankLens Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_judge:
+        description: "Include LLM-as-judge groundedness scoring"
+        type: boolean
+        default: true
+  schedule:
+    # 02:30 UTC nightly — 08:00 IST, so results are waiting in the morning.
+    - cron: "30 2 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "prompts/**"
+      - "app/pipeline/**"
+      - "knowledge_base/**"
+      - "evals/**"
+
+jobs:
+  evaluate:
+    name: Run evaluation suite
+    runs-on: ubuntu-latest
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Run deterministic evals and retrieval headroom
+        # Free, no API key needed. Runs first so a logic regression is caught
+        # before spending anything on the graded layer. --headroom reports how
+        # much relevance the candidate pool holds that the final cut discards,
+        # which is the ceiling on what reranking can recover.
+        run: python -m evals.run_evals --headroom
+
+      - name: Run reranker A/B
+        # Measures reranking on vs off over the golden queries. Needs the API
+        # key for embeddings and for the LLM rerank backend.
+        run: python -m evals.run_evals --retrieval-ab
+
+      - name: Run grounded and judged evals
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_judge }}
+        run: python -m evals.run_evals --with-llm --judge
+
+      - name: Run grounded evals without judge
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_judge }}
+        run: python -m evals.run_evals --with-llm
