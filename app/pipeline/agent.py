@@ -5,20 +5,29 @@ Builds a structured CustomerProfile using:
     1. Grounded RAG context & financial health metrics
     2. Indirect Prompt Injection Defense via XML boundary encapsulation
     3. OpenAI GPT-4o with temperature=0.2 for deterministic precision
-    4. Pydantic Output Guardrail Parsing (CustomerProfile schema)
+    4. Pydantic output guardrails — including *semantic* validation of product
+       names against the knowledge base, not merely type validation
+    5. A single corrective retry when validation fails, before giving up
+
+The risk rating and health score are NOT produced here. They are computed
+deterministically in analyzer.py and passed in; this module only generates the
+narrative that explains them.
 """
 
+import re
+from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from langchain_openai import ChatOpenAI
+from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.pipeline.analyzer import FinancialMetrics
+from app.pipeline.analyzer import FinancialMetrics, RiskProfile
+from app.pipeline.rag import KNOWLEDGE_BASE_DIR
 
 logger = get_logger(__name__)
 
@@ -28,27 +37,113 @@ SYSTEM_PROMPT_PATH = (
 )
 
 
+# ── Product Catalogue & Name Resolution ───────────────────────────────────────
+#
+# Pydantic validates that primary_product is a string. It cannot know whether
+# that string names a product the bank actually sells. Without the check below,
+# an invented product passes validation and is rendered to a Relationship
+# Manager as a real recommendation to make to a customer.
+
+# Words carrying no product meaning, dropped before comparison.
+_STOPWORDS = {"the", "a", "an", "and", "of", "for", "in", "with", "to"}
+
+# Minimum overlap between a proposed name and a catalogue entry for the name to
+# be accepted. 0.6 admits real variants ("High-Yield Savings Account",
+# "Sweep-In Fixed Deposit") while rejecting plausible inventions
+# ("Platinum Rewards Card", "Gold Loan").
+_PRODUCT_MATCH_THRESHOLD = 0.6
+
+
+def _tokenize(text: str) -> set[str]:
+    """Lowercase, strip punctuation, drop stopwords, and crudely singularize."""
+    words = re.findall(r"[a-z0-9]+", str(text).lower())
+    tokens = set()
+    for word in words:
+        if word in _STOPWORDS:
+            continue
+        if len(word) > 3 and word.endswith("s"):
+            word = word[:-1]
+        tokens.add(word)
+    return tokens
+
+
+@lru_cache(maxsize=1)
+def get_product_catalogue() -> dict[str, tuple[frozenset[str], ...]]:
+    """
+    Build {knowledge base filename: (alias token sets,)} from disk.
+
+    Each product contributes two aliases — its filename stem and its markdown
+    H1 title — because the LLM may echo either ("mutual_funds_sip.md" is titled
+    "Systematic Investment Plan (SIP) & Wealth Mutual Funds", and both phrasings
+    are legitimate).
+    """
+    catalogue: dict[str, tuple[frozenset[str], ...]] = {}
+
+    for md_file in sorted(KNOWLEDGE_BASE_DIR.glob("*.md")):
+        aliases = [frozenset(_tokenize(md_file.stem.replace("_", " ")))]
+
+        first_line = md_file.read_text(encoding="utf-8").splitlines()[0]
+        if first_line.startswith("#"):
+            aliases.append(frozenset(_tokenize(first_line.lstrip("# "))))
+
+        catalogue[md_file.name] = tuple(a for a in aliases if a)
+
+    return catalogue
+
+
+def resolve_product(name: str) -> str | None:
+    """
+    Map a proposed product name onto a knowledge base file, or None.
+
+    Scored symmetrically — overlap is measured against both the catalogue entry
+    and the proposed name, so neither a terse name ("Home Loan" against
+    "home_loan_mortgage") nor a verbose one ("Systematic Investment Plan"
+    against "mutual_funds_sip") is unfairly penalised.
+    """
+    candidate = _tokenize(name)
+    if not candidate:
+        return None
+
+    best_file, best_score = None, 0.0
+
+    for filename, aliases in get_product_catalogue().items():
+        for alias in aliases:
+            shared = len(alias & candidate)
+            if not shared:
+                continue
+            score = max(shared / len(alias), shared / len(candidate))
+            if score > best_score:
+                best_file, best_score = filename, score
+
+    return best_file if best_score >= _PRODUCT_MATCH_THRESHOLD else None
+
+
+def _validate_product_name(value: str) -> str:
+    """Field validator shared by primary_product and secondary_product."""
+    if resolve_product(value) is None:
+        known = sorted(get_product_catalogue())
+        raise ValueError(
+            f"'{value}' is not a product in the knowledge base. "
+            f"Use a product from: {known}"
+        )
+    return value
+
+
 # ── Output Schema ─────────────────────────────────────────────────────────────
 
 
-class CustomerProfile(BaseModel):
+class ProfileNarrative(BaseModel):
     """
-    Structured analytical output produced by the AI profiling engine.
+    The part of the profile the LLM is actually asked to write.
 
-    Every field is grounded in the customer's actual transaction data
-    and the RAG-retrieved banking product context.
+    Analysis and recommendation prose, grounded in the customer's transaction
+    metrics and the RAG-retrieved product context. Deliberately excludes the
+    risk rating and health score: those are arithmetic, they are computed in
+    analyzer.py, and a credit decision must be reproducible.
     """
 
     financial_persona: str = Field(
         description="Short label describing the customer archetype, e.g. 'Disciplined High-Net Saver'."
-    )
-
-    financial_health_score: int = Field(
-        description="Overall financial health score from 0 to 100 based on savings rate and expense stability."
-    )
-
-    risk_profile: Literal["Low", "Medium", "High"] = Field(
-        description="Credit and default risk rating based on expense-to-income ratio and cashflow deficit."
     )
 
     income_stability_analysis: str = Field(
@@ -80,7 +175,36 @@ class CustomerProfile(BaseModel):
     )
 
     rm_hook_points: list[str] = Field(
-        description="Exactly 3 structured bullet points for the RM call pitch: 1. Opening observation, 2. Value proposition, 3. Call-to-action."
+        min_length=3,
+        max_length=3,
+        description="Exactly 3 structured bullet points for the RM call pitch: 1. Opening observation, 2. Value proposition, 3. Call-to-action.",
+    )
+
+    @field_validator("primary_product", "secondary_product")
+    @classmethod
+    def product_must_exist(cls, value: str) -> str:
+        """Reject product names that do not correspond to a knowledge base entry."""
+        return _validate_product_name(value)
+
+
+class CustomerProfile(ProfileNarrative):
+    """
+    The complete profile handed to the UI.
+
+    Extends the LLM-generated narrative with fields the application owns:
+    the risk rating and health score computed in analyzer.py, and the list of
+    sources actually retrieved. Keeping these off ProfileNarrative is what
+    prevents the model from being asked to decide them.
+    """
+
+    financial_health_score: int = Field(
+        ge=0,
+        le=100,
+        description="Financial health score computed from savings rate in analyzer.py.",
+    )
+
+    risk_profile: RiskProfile = Field(
+        description="Credit risk band computed from savings rate in analyzer.py."
     )
 
     retrieved_sources: list[str] = Field(
@@ -116,7 +240,7 @@ def build_profile(
         raise FileNotFoundError(f"System prompt not found at: {SYSTEM_PROMPT_PATH}")
 
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    parser = PydanticOutputParser(pydantic_object=CustomerProfile)
+    parser = PydanticOutputParser(pydantic_object=ProfileNarrative)
 
     rag_context_block = "\n\n---\n\n".join(
         f"[Source: {chunk['source']}]\n{chunk['content']}" for chunk in retrieved_chunks
@@ -136,7 +260,11 @@ def build_profile(
                 "{rag_context}\n"
                 "</rag_context>\n\n"
                 "## Available Source Documents\n"
-                "{sources}",
+                "{sources}\n\n"
+                "## Assigned Risk Rating (already computed — explain it, do not change it)\n"
+                "risk_profile={risk_profile}, financial_health_score={health_score}, "
+                "cashflow_negative={cashflow_negative}"
+                "{correction}",
             ),
         ]
     )
@@ -164,16 +292,42 @@ def build_profile(
         source_filenames,
     )
 
-    profile: CustomerProfile = chain.invoke(
-        {
-            "metrics": metrics.model_dump_json(indent=2),
-            "rag_context": rag_context_block,
-            "sources": str(source_filenames),
-            "format_instructions": parser.get_format_instructions(),
-        }
-    )
+    payload = {
+        "metrics": metrics.model_dump_json(indent=2),
+        "rag_context": rag_context_block,
+        "sources": str(source_filenames),
+        "format_instructions": parser.get_format_instructions(),
+        "risk_profile": metrics.risk_profile,
+        "health_score": metrics.financial_health_score,
+        "cashflow_negative": metrics.is_cashflow_negative,
+        "correction": "",
+    }
 
-    profile.retrieved_sources = source_filenames
+    try:
+        narrative: ProfileNarrative = chain.invoke(payload)
+    except (OutputParserException, ValueError) as first_error:
+        # One corrective retry with the validation error fed back. A rejected
+        # product name is usually a near miss the model can fix when told
+        # exactly what was wrong — failing the whole request on the first
+        # attempt would be needlessly brittle.
+        logger.warning(
+            "Profile validation failed, retrying once with corrective feedback: %s",
+            first_error,
+        )
+        payload["correction"] = (
+            "\n\n## Correction Required\n"
+            "Your previous response was rejected with this error:\n"
+            f"{first_error}\n"
+            "Return a corrected response that satisfies the schema exactly."
+        )
+        narrative = chain.invoke(payload)
+
+    profile = CustomerProfile(
+        **narrative.model_dump(),
+        financial_health_score=metrics.financial_health_score,
+        risk_profile=metrics.risk_profile,
+        retrieved_sources=source_filenames,
+    )
 
     logger.info(
         "Profile built | Persona: '%s' | Score: %d | Risk: %s | Primary: '%s' | Secondary: '%s'",
