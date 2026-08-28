@@ -211,13 +211,40 @@ it needs no API key.
 
 Two backends, chosen by `RERANK_BACKEND`:
 
-- **`llm`** (default) — one listwise call to `gpt-4o-mini`. No extra
-  dependencies, reuses the existing key, about a second of added latency.
+- **`llm`** — one listwise call to `gpt-4o-mini`. No extra dependencies,
+  reuses the existing key, about a second of added latency.
 - **`cross_encoder`** — a local sentence-transformers cross-encoder. Lower
   latency and no API cost, but it pulls in torch: several hundred MB of image
   and more memory than the t2.micro this deploys to has spare. Opt-in, for
   larger hosts (`pip install sentence-transformers`).
-- **`none`** — use the fusion order directly.
+- **`none`** (default) — use the fusion order directly.
+
+### Why reranking ships disabled
+
+Headroom is not benefit. Running the full pipeline with reranking on and off
+over the same 65 golden queries (`python -m evals.run_evals --retrieval-ab`):
+
+| 15 → 4 passages | hit | MRR | NDCG | precision | harmful |
+|---|---|---|---|---|---|
+| fusion only | 1.000 | 0.785 | 0.626 | 0.419 | 0.400 |
+| reranked | 0.923 | 0.838 | 0.687 | 0.485 | 0.908 |
+| delta | **−0.077** | +0.054 | +0.061 | +0.065 | **+0.508** |
+
+Ordering improves on every conventional metric. Two things get worse, and both
+matter more here. Hit rate falls, meaning the reranker discards the relevant
+document outright on about 8% of queries fusion got right. And `harmful` —
+chunks drawn from `credit_card.md` or `personal_loan.md` for a customer in
+cashflow deficit — more than doubles. Averaged over the 26 deficit cases that
+is 1.0 to 2.3 chunks out of 4, so unsecured-credit material grows from a
+quarter to over half of what the model sees for exactly the customers the
+credit guardrail exists to protect.
+
+The guardrail lives in the prompt and still holds, so this is a narrowed safety
+margin rather than a live defect. It is still not a default worth shipping. The
+likely fix is to tell the reranker about `is_cashflow_negative`, which it
+currently cannot see — the retrieval query names the risk band but never says
+the customer is in deficit. Re-run the A/B after any change to the rerank
+prompt or the retrieval query.
 
 Reranking can never break retrieval. A missing key, an unknown backend name, an
 absent dependency, a model error or a malformed response all fall back to the
@@ -458,7 +485,7 @@ evaluation suite over all 65 golden cases.
 | `CHUNK_OVERLAP` | No | `50` | RAG chunk overlap (characters) |
 | `RETRIEVAL_K` | No | `4` | Chunks passed to the LLM after reranking |
 | `RETRIEVAL_CANDIDATE_K` | No | `15` | Candidates pulled before reranking |
-| `RERANK_BACKEND` | No | `llm` | `llm`, `cross_encoder`, or `none` |
+| `RERANK_BACKEND` | No | `none` | `llm`, `cross_encoder`, or `none` — see [Why reranking ships disabled](#why-reranking-ships-disabled) |
 | `CROSS_ENCODER_MODEL` | No | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Used when backend is `cross_encoder` |
 | `RERANK_PASSAGE_CHARS` | No | `600` | Characters of each candidate shown to the reranker |
 | `LANGCHAIN_TRACING_V2` | No | `false` | Enable LangSmith tracing |
