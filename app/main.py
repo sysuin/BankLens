@@ -238,7 +238,7 @@ def main() -> None:
         st.markdown("### 🔗 Project Repository")
         github_html = """
         <a href='https://github.com/sysuin/BankLens' target='_blank' style='text-decoration:none;'>
-            <div style='background:#1e293b; color:#38bdf8; padding:8px 12px; border-radius:8px; text-align:center; font-weight:600; border:1px solid #334155;'>
+            <div style='background:var(--bl-sb-surface); color:var(--bl-sb-accent); padding:8px 12px; border-radius:8px; text-align:center; font-weight:600; border:1px solid var(--bl-sb-border);'>
                 ⭐ GitHub: sysuin/BankLens
             </div>
         </a>
@@ -251,7 +251,7 @@ def main() -> None:
         st.markdown("### 🛠️ System Architecture")
 
         tech_html = """
-        <div style='font-size:0.78rem; color:#cbd5e1;'>
+        <div style='font-size:0.78rem; color:var(--bl-sb-muted);'>
             <p style='margin-bottom:2px;'><strong>🧠 AI &amp; LLM Orchestration</strong></p>
             <div style='display:flex; flex-wrap:wrap; gap:2px; margin-bottom:6px;'>
                 <span class='tech-pill'>OpenAI GPT-4o</span>

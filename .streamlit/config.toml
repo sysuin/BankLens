@@ -1,9 +1,80 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BankLens — Streamlit theme
+#
+# Both schemes are defined explicitly, so the app follows the viewer's choice
+# (Light / Dark / System) instead of being pinned to one. Previously only a
+# single light palette was declared, which forced every viewer into light mode
+# no matter what their OS or the Streamlit menu asked for.
+#
+# The sidebar is scoped separately in both schemes. It is deep navy in light
+# mode as a deliberate brand contrast, and in dark mode it sits *above* the
+# page background rather than below it — a sidebar darker than an already dark
+# page loses its edge and the layout reads as one flat surface.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# primaryColor doubles as the fill behind white text on primary buttons and
+# selected tabs, so every value here clears 4.5:1 against white. Brighter
+# accents (#38bdf8, #60a5fa, #7dd3fc) looked better in isolation but rendered
+# button labels at 1.7-2.5:1, which is why they are not used.
 [theme]
-primaryColor = "#2563eb"
+font = "sans serif"
+baseRadius = "0.625rem"
+buttonRadius = "0.625rem"
+showWidgetBorder = true
+
+# ── Light ────────────────────────────────────────────────────────────────────
+[theme.light]
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f8fafc"
 textColor = "#0f172a"
-font = "sans serif"
+primaryColor = "#2563eb"
+borderColor = "#e2e8f0"
+linkColor = "#1d4ed8"
+codeBackgroundColor = "#f1f5f9"
+codeTextColor = "#0f172a"
+dataframeHeaderBackgroundColor = "#f1f5f9"
+dataframeBorderColor = "#e2e8f0"
+greenColor = "#047857"
+redColor = "#b91c1c"
+orangeColor = "#b45309"
+chartCategoricalColors = ["#2563eb", "#047857", "#b45309", "#7c3aed", "#0891b2", "#be123c"]
+
+[theme.light.sidebar]
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#f8fafc"
+primaryColor = "#0369a1"
+borderColor = "#334155"
+linkColor = "#7dd3fc"
+codeBackgroundColor = "#1e293b"
+codeTextColor = "#e2e8f0"
+
+# ── Dark ─────────────────────────────────────────────────────────────────────
+[theme.dark]
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#131c2e"
+textColor = "#e8eef7"
+primaryColor = "#2563eb"
+borderColor = "#2a3648"
+linkColor = "#7dd3fc"
+codeBackgroundColor = "#131c2e"
+codeTextColor = "#e8eef7"
+dataframeHeaderBackgroundColor = "#1a2436"
+dataframeBorderColor = "#2a3648"
+greenColor = "#34d399"
+redColor = "#f87171"
+orangeColor = "#fbbf24"
+chartCategoricalColors = ["#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#fb7185"]
+
+[theme.dark.sidebar]
+backgroundColor = "#131c2e"
+secondaryBackgroundColor = "#1f2a3d"
+textColor = "#e8eef7"
+primaryColor = "#0369a1"
+borderColor = "#2f3d52"
+linkColor = "#7dd3fc"
+codeBackgroundColor = "#1f2a3d"
+codeTextColor = "#e8eef7"
 
 [browser]
 gatherUsageStats = false
