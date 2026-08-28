@@ -36,20 +36,70 @@ from app.pipeline.analyzer import (
 logger = get_logger(__name__)
 
 
-class GroundednessVerdict(BaseModel):
-    """A judge's reading of whether a profile's claims are supported."""
+# The prose fields a juror scores. Everything else on the profile is either a
+# product name (already validated against the knowledge base) or a number the
+# application computed, so neither is the judge's to second-guess.
+NARRATIVE_FIELDS: tuple[str, ...] = (
+    "income_stability_analysis",
+    "spending_pattern_breakdown",
+    "credit_risk_assessment",
+    "primary_reason",
+    "secondary_reason",
+)
 
+# Jurors per profile. Odd, so a majority always exists.
+JUDGE_PANEL_SIZE = 3
+
+
+class FieldVerdict(BaseModel):
+    """One juror's reading of one narrative field."""
+
+    field: str = Field(description="The profile field being judged.")
     grounded: bool = Field(
-        description="True only if every factual claim is supported by the metrics or the retrieved context."
+        description="True if every factual claim in this field is supported."
     )
     unsupported_claims: list[str] = Field(
         default_factory=list,
-        description="Verbatim quotes of any claim not supported by the supplied evidence.",
+        description="Verbatim quotes from this field that the evidence does not support.",
+    )
+
+
+class JurorVerdict(BaseModel):
+    """One juror's full reading of a profile."""
+
+    fields: list[FieldVerdict] = Field(
+        description="One entry per narrative field you were given."
     )
     contradicts_assigned_risk: bool = Field(
         description="True if the narrative argues for a different risk rating than the one assigned."
     )
     reasoning: str = Field(description="One or two sentences explaining the verdict.")
+
+
+class GroundednessVerdict(BaseModel):
+    """
+    The panel's result after majority vote.
+
+    Keeps the shape the callers already consume — `grounded`,
+    `unsupported_claims`, `contradicts_assigned_risk`, `reasoning` — and adds
+    the per-field detail that makes a failure actionable.
+    """
+
+    grounded: bool = Field(
+        description="True when no field was condemned by a majority of jurors."
+    )
+    unsupported_claims: list[str] = Field(default_factory=list)
+    contradicts_assigned_risk: bool = Field(
+        description="True when a majority of jurors saw the narrative dispute its rating."
+    )
+    reasoning: str = Field(description="Summary of how the panel voted.")
+    condemned_fields: list[str] = Field(
+        default_factory=list,
+        description="Fields a majority of jurors found ungrounded.",
+    )
+    juror_count: int = Field(
+        default=0, description="How many jurors returned a verdict."
+    )
 
 
 JUDGE_SYSTEM_PROMPT = """\
@@ -113,6 +163,11 @@ contradicts_assigned_risk only when the narrative explicitly argues for a band
 different from the one it was given.
 
 Quote unsupported claims verbatim so they can be traced.
+
+Judge each narrative field separately and return one entry per field, using the
+field names exactly as given. A weak sentence in one field says nothing about
+the others, and lumping them together loses the only information that would
+tell someone what to fix.
 """
 
 
@@ -160,28 +215,15 @@ def _derived_figures(metrics: FinancialMetrics) -> str:
     return "\n".join(lines)
 
 
-def judge_groundedness(
+def _run_juror(
     profile: CustomerProfile,
     metrics: FinancialMetrics,
-    retrieved_chunks: list[dict],
-) -> GroundednessVerdict:
-    """
-    Score one generated profile for groundedness.
-
-    Raises:
-        RuntimeError: If no API key is configured — the caller is expected to
-                      skip the judged layer rather than silently pass it.
-    """
-    if not settings.openai_api_key:
-        raise RuntimeError("judge_groundedness requires OPENAI_API_KEY to be set")
-
-    parser = PydanticOutputParser(pydantic_object=GroundednessVerdict)
-
-    context_block = "\n\n---\n\n".join(
-        f"[Source: {chunk['source']}]\n{chunk['content']}" for chunk in retrieved_chunks
-    )
-
-    derived_block = _derived_figures(metrics)
+    context_block: str,
+    derived_block: str,
+    seed_hint: str,
+) -> JurorVerdict:
+    """Ask one juror for a per-field verdict."""
+    parser = PydanticOutputParser(pydantic_object=JurorVerdict)
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -192,32 +234,119 @@ def judge_groundedness(
                 "<derived_figures>\n{derived}\n</derived_figures>\n\n"
                 "<assigned_risk>{risk}</assigned_risk>\n\n"
                 "<retrieved_context>\n{context}\n</retrieved_context>\n\n"
-                "<generated_profile>\n{profile}\n</generated_profile>",
+                "<generated_profile>\n{profile}\n</generated_profile>\n\n"
+                "<fields_to_judge>\n{fields}\n</fields_to_judge>\n\n"
+                "{seed_hint}",
             ),
         ]
     )
 
+    # Jurors must disagree to be worth polling. At temperature 0 three calls on
+    # identical input return the same answer three times, which is a single
+    # opinion wearing a rosette. Reproducibility is deliberately traded here;
+    # every deterministic check in the suite stays exactly reproducible.
     judge = ChatOpenAI(
         model=settings.openai_mini_model,
-        temperature=0.0,
+        temperature=0.4,
         openai_api_key=settings.openai_api_key,
     )
 
-    verdict: GroundednessVerdict = (prompt | judge | parser).invoke(
+    return (prompt | judge | parser).invoke(
         {
             "metrics": metrics.model_dump_json(indent=2),
             "derived": derived_block,
             "risk": metrics.risk_profile,
             "context": context_block,
             "profile": profile.model_dump_json(indent=2),
+            "fields": "\n".join(f"- {name}" for name in NARRATIVE_FIELDS),
+            "seed_hint": seed_hint,
             "format_instructions": parser.get_format_instructions(),
         }
     )
 
-    logger.info(
-        "Judge verdict | grounded=%s | contradicts_risk=%s | unsupported=%d",
-        verdict.grounded,
-        verdict.contradicts_assigned_risk,
-        len(verdict.unsupported_claims),
+
+def judge_groundedness(
+    profile: CustomerProfile,
+    metrics: FinancialMetrics,
+    retrieved_chunks: list[dict],
+    panel_size: int = JUDGE_PANEL_SIZE,
+) -> GroundednessVerdict:
+    """
+    Score one generated profile for groundedness, by majority of a juror panel.
+
+    A single juror was measured condemning claims it had just restated as
+    correct — calling a verbatim "88%" unsupported in the same verdict that
+    said the ratio was 88%. Those errors are not reproducible across samples,
+    which is exactly what a panel exploits: a false positive has to be invented
+    by two independent jurors to survive, while a real one usually is not hard
+    to see twice.
+
+    Scoring is per field, so a shaky sentence in one field cannot condemn the
+    other four, and a failure names the field to look at.
+
+    Raises:
+        RuntimeError: If no API key is configured — the caller is expected to
+                      skip the judged layer rather than silently pass it.
+    """
+    if not settings.openai_api_key:
+        raise RuntimeError("judge_groundedness requires OPENAI_API_KEY to be set")
+
+    context_block = "\n\n---\n\n".join(
+        f"[Source: {chunk['source']}]\n{chunk['content']}" for chunk in retrieved_chunks
     )
-    return verdict
+    derived_block = _derived_figures(metrics)
+
+    verdicts: list[JurorVerdict] = []
+    for index in range(panel_size):
+        hint = f"You are juror {index + 1} of {panel_size}, reviewing independently."
+        try:
+            verdicts.append(
+                _run_juror(profile, metrics, context_block, derived_block, hint)
+            )
+        except Exception as exc:  # noqa: BLE001 - a juror who cannot vote abstains
+            logger.warning("Juror %d failed to return a verdict (%s).", index + 1, exc)
+
+    if not verdicts:
+        raise RuntimeError("no juror returned a verdict")
+
+    majority = len(verdicts) // 2 + 1
+
+    # Tally condemnations per field. A juror who omits a field is treated as
+    # having no objection to it rather than as condemning it.
+    against: dict[str, list[str]] = {name: [] for name in NARRATIVE_FIELDS}
+    counts: dict[str, int] = {name: 0 for name in NARRATIVE_FIELDS}
+    for verdict in verdicts:
+        for field_verdict in verdict.fields:
+            name = field_verdict.field
+            if name not in counts or field_verdict.grounded:
+                continue
+            counts[name] += 1
+            against[name].extend(field_verdict.unsupported_claims)
+
+    condemned = [name for name, count in counts.items() if count >= majority]
+    disputes_risk = sum(1 for v in verdicts if v.contradicts_assigned_risk) >= majority
+
+    tally = ", ".join(f"{name} {counts[name]}/{len(verdicts)}" for name in condemned)
+    reasoning = f"{len(verdicts)} jurors, majority {majority}. " + (
+        f"Condemned by majority: {tally}."
+        if condemned
+        else "No field condemned by majority."
+    )
+
+    result = GroundednessVerdict(
+        grounded=not condemned,
+        unsupported_claims=[claim for name in condemned for claim in against[name]],
+        contradicts_assigned_risk=disputes_risk,
+        reasoning=reasoning,
+        condemned_fields=condemned,
+        juror_count=len(verdicts),
+    )
+
+    logger.info(
+        "Panel verdict | jurors=%d | grounded=%s | contradicts_risk=%s | condemned=%s",
+        result.juror_count,
+        result.grounded,
+        result.contradicts_assigned_risk,
+        result.condemned_fields or "none",
+    )
+    return result
