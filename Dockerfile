@@ -7,7 +7,9 @@
 #
 # Stage 2 (runtime): copies only the installed packages and application
 #   code into a slim final image. This keeps the production image small
-#   (~400MB vs ~900MB for a single-stage build).
+#   (measured 1.08GB; the builder stage's compilers and build caches are
+#   what stay behind, not the dependency tree itself, which is dominated
+#   by chromadb and the langchain stack).
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: Builder ──────────────────────────────────────────────────────────
