@@ -2,13 +2,32 @@
 Reusable Streamlit UI components for BankLens.
 
 Renders polished UI blocks with enterprise-grade styling & SEO metadata:
-    - inject_custom_css()      — master CSS for font, gradients, SEO meta tags, light mode lock, dark sidebar, mobile responsiveness
+    - inject_custom_css()      — theme tokens, master CSS, SEO meta tags, mobile responsiveness
     - render_header()          — sleek header with gradient title & live badge
     - render_metric_cards()    — formatted KPI cards
     - render_transaction_table() — styled DataFrame display
     - render_profile_card()    — customer persona, health score & risk badge
     - render_recommendation()  — Primary & Secondary products, bulleted RM hooks, RAG sources
     - render_footer()          — clean footer with contact info
+
+Theming
+-------
+Streamlit themes its own widgets from .streamlit/config.toml, which defines a
+light and a dark scheme. The custom HTML in this module cannot read that theme:
+Streamlit exposes no CSS custom properties and stamps no theme attribute on the
+DOM — only unstable emotion class hashes. So this module publishes its own
+token palette and every custom colour is drawn from it.
+
+The palette is resolved twice, deliberately:
+
+  1. `prefers-color-scheme` handles the common case where the viewer is on the
+     default "System" setting, and keeps working even if a rerun never happens.
+  2. `st.context.theme` reports the theme Streamlit actually settled on, which
+     is the only thing that is correct when the viewer picks Light or Dark
+     explicitly from the menu and overrides their OS. It is emitted last so it
+     wins over the media query at equal specificity.
+
+Neither alone is sufficient, which is why both are emitted.
 """
 
 import textwrap
@@ -21,15 +40,161 @@ from app.pipeline.agent import CustomerProfile
 
 # ── Colour Maps ───────────────────────────────────────────────────────────────
 
+# Risk badges carry white text on a solid fill, so the fill has to clear 4.5:1
+# against white in *both* schemes. These shades do (5.3:1, 4.9:1, 6.5:1) and
+# read correctly on a white card and a dark one alike, so unlike everything
+# else in this module they are deliberately not theme-dependent. The previous
+# values (#10b981, #f59e0b, #ef4444) sat near 2.3:1 and failed in either.
 RISK_COLOURS: dict[str, str] = {
-    "Low": "#10b981",  # emerald green
-    "Medium": "#f59e0b",  # amber
-    "High": "#ef4444",  # rose red
+    "Low": "#047857",
+    "Medium": "#b45309",
+    "High": "#b91c1c",
+}
+
+# ── Theme Tokens ──────────────────────────────────────────────────────────────
+
+# `*-border` is the card outline and wants to be bright enough to see.
+# `*-chip` is the fill behind white label text and must clear 4.5:1 against
+# white, which the border shades do not. They are separate for that reason.
+LIGHT_TOKENS: dict[str, str] = {
+    "--bl-surface": "#ffffff",
+    "--bl-surface-2": "#f8fafc",
+    "--bl-surface-3": "#f1f5f9",
+    "--bl-border": "#e2e8f0",
+    "--bl-border-strong": "#cbd5e1",
+    "--bl-text": "#0f172a",
+    "--bl-text-muted": "#475569",
+    # Slate-500 (#64748b) measured 4.34:1 on the --bl-surface-3 score pill,
+    # just under AA. This shade clears it there (4.9:1) and on white (5.4:1).
+    "--bl-text-subtle": "#5b6b81",
+    "--bl-body": "#334155",
+    "--bl-accent": "#2563eb",
+    "--bl-accent-text": "#0369a1",
+    "--bl-info-bg": "#e0f2fe",
+    "--bl-card-grad-a": "#ffffff",
+    "--bl-card-grad-b": "#f8fafc",
+    "--bl-shadow": "rgba(15, 23, 42, 0.05)",
+    "--bl-primary-bg": "#eff6ff",
+    "--bl-primary-border": "#2563eb",
+    "--bl-primary-chip": "#2563eb",
+    "--bl-primary-title": "#1e3a5f",
+    "--bl-secondary-bg": "#f0fdf4",
+    "--bl-secondary-border": "#16a34a",
+    "--bl-secondary-chip": "#15803d",
+    "--bl-secondary-title": "#14532d",
+    "--bl-hook-bg": "#f8fafc",
+    "--bl-hook-border": "#0284c7",
+    "--bl-hook-text": "#1e293b",
+    "--bl-success-text": "#047857",
+    "--bl-warning-text": "#b45309",
+    "--bl-score-good": "#047857",
+    "--bl-score-mid": "#b45309",
+    "--bl-score-bad": "#b91c1c",
+    # Sidebar is deep navy in light mode, so its tokens are dark-surface tokens.
+    "--bl-sb-text": "#f8fafc",
+    "--bl-sb-muted": "#cbd5e1",
+    "--bl-sb-surface": "#1e293b",
+    "--bl-sb-border": "#334155",
+    "--bl-sb-accent": "#38bdf8",
+}
+
+DARK_TOKENS: dict[str, str] = {
+    # Cards sit above the #0b1220 page background rather than matching it, so
+    # panels keep an edge without needing a heavier border.
+    "--bl-surface": "#131c2e",
+    "--bl-surface-2": "#1a2436",
+    "--bl-surface-3": "#1f2a3d",
+    "--bl-border": "#2a3648",
+    "--bl-border-strong": "#3b4a63",
+    "--bl-text": "#e8eef7",
+    "--bl-text-muted": "#a9b6c9",
+    "--bl-text-subtle": "#8494ab",
+    "--bl-body": "#c3cedd",
+    "--bl-accent": "#60a5fa",
+    "--bl-accent-text": "#7dd3fc",
+    "--bl-info-bg": "#12283d",
+    "--bl-card-grad-a": "#131c2e",
+    "--bl-card-grad-b": "#172033",
+    "--bl-shadow": "rgba(0, 0, 0, 0.45)",
+    "--bl-primary-bg": "#14243c",
+    "--bl-primary-border": "#3b82f6",
+    "--bl-primary-chip": "#1d4ed8",
+    "--bl-primary-title": "#bfdbfe",
+    "--bl-secondary-bg": "#0f2a1e",
+    "--bl-secondary-border": "#22c55e",
+    "--bl-secondary-chip": "#15803d",
+    "--bl-secondary-title": "#bbf7d0",
+    "--bl-hook-bg": "#1a2436",
+    "--bl-hook-border": "#38bdf8",
+    "--bl-hook-text": "#dbe6f3",
+    "--bl-success-text": "#34d399",
+    "--bl-warning-text": "#fbbf24",
+    "--bl-score-good": "#34d399",
+    "--bl-score-mid": "#fbbf24",
+    "--bl-score-bad": "#f87171",
+    "--bl-sb-text": "#e8eef7",
+    "--bl-sb-muted": "#a9b6c9",
+    "--bl-sb-surface": "#1f2a3d",
+    "--bl-sb-border": "#2f3d52",
+    "--bl-sb-accent": "#7dd3fc",
 }
 
 
+def _active_theme() -> str | None:
+    """
+    Return "light" / "dark" as Streamlit resolved it, or None if unavailable.
+
+    None is a normal outcome, not an error: the theme is reported by the
+    browser, so it can be absent on the very first script run. Callers fall
+    back to the prefers-color-scheme rules, which is why this never raises.
+    """
+    try:
+        theme = st.context.theme
+    except Exception:  # noqa: BLE001 - theme reporting must never break the page
+        return None
+
+    theme_type = getattr(theme, "type", None) if theme is not None else None
+    return theme_type if theme_type in ("light", "dark") else None
+
+
+def _token_block(tokens: dict[str, str], indent: str = "        ") -> str:
+    """Render a token mapping as CSS declarations."""
+    return "\n".join(f"{indent}{name}: {value};" for name, value in tokens.items())
+
+
+def _theme_token_css() -> str:
+    """
+    Build the token stylesheet: light base, dark media query, explicit override.
+
+    Order matters. The explicit block is emitted last and at the same
+    specificity as the media query, so when Streamlit tells us the real theme
+    it overrides whatever the OS preference implied.
+    """
+    css = [
+        ":root {",
+        _token_block(LIGHT_TOKENS),
+        "}",
+        "@media (prefers-color-scheme: dark) {",
+        "    :root {",
+        _token_block(DARK_TOKENS, indent="            "),
+        "    }",
+        "}",
+    ]
+
+    resolved = _active_theme()
+    if resolved is not None:
+        css += [
+            f"/* Streamlit reported theme: {resolved} */",
+            ":root {",
+            _token_block(DARK_TOKENS if resolved == "dark" else LIGHT_TOKENS),
+            "}",
+        ]
+
+    return "\n".join(css)
+
+
 def inject_custom_css() -> None:
-    """Inject custom CSS rules and SEO meta tags for search engines and social sharing."""
+    """Inject theme tokens, custom CSS rules, and SEO meta tags."""
     # ── SEO Meta Tags Injection ───────────────────────────────────────────────
     st.markdown(
         textwrap.dedent("""
@@ -40,7 +205,7 @@ def inject_custom_css() -> None:
             <meta name="author" content="Sunny Singh" />
             <meta name="robots" content="index, follow" />
             <link rel="canonical" href="https://banklens.sysuin.com" />
-            <meta name="color-scheme" content="light" />
+            <meta name="color-scheme" content="light dark" />
             <meta property="og:type" content="website" />
             <meta property="og:url" content="https://banklens.sysuin.com" />
             <meta property="og:title" content="BankLens | AI Bank Statement Analyzer &amp; Product Recommendation Engine" />
@@ -54,7 +219,15 @@ def inject_custom_css() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Theme Tokens ─────────────────────────────────────────────────────────
+    st.markdown(f"<style>\n{_theme_token_css()}\n</style>", unsafe_allow_html=True)
+
     # ── Master CSS Styling ───────────────────────────────────────────────────
+    #
+    # Nothing here paints the app background or forces body text colour any
+    # more. Those are Streamlit's to set from config.toml, and overriding them
+    # with !important was what pinned the whole app to light mode regardless of
+    # the viewer's preference.
     st.markdown(
         textwrap.dedent("""
         <style>
@@ -64,99 +237,72 @@ def inject_custom_css() -> None:
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
-        /* Force Main Container Light Mode */
-        [data-testid="stAppViewContainer"], .stApp {
-            background-color: #ffffff !important;
-            color: #0f172a !important;
-        }
-
-        [data-testid="stHeader"] {
-            background-color: rgba(255, 255, 255, 0.9) !important;
-        }
-
-        /* Main Workspace Typography */
-        .stApp p, .stApp span, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp li {
-            color: #0f172a;
-        }
-
         /* Metric card styling */
         [data-testid="stMetricValue"] {
             font-size: 1.8rem !important;
             font-weight: 700 !important;
-            color: #0f172a !important;
+            color: var(--bl-text) !important;
         }
 
         [data-testid="stMetricLabel"] {
             font-size: 0.85rem !important;
             font-weight: 600 !important;
-            color: #475569 !important;
+            color: var(--bl-text-muted) !important;
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
 
         /* Glass card container */
         .glass-card {
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border: 1px solid #e2e8f0;
+            background: linear-gradient(135deg, var(--bl-card-grad-a) 0%, var(--bl-card-grad-b) 100%);
+            border: 1px solid var(--bl-border);
             border-radius: 16px;
             padding: 1.25rem 1.5rem;
-            box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05);
+            box-shadow: 0 4px 20px -2px var(--bl-shadow);
             margin-bottom: 1.25rem;
         }
 
-        /* Sidebar compact spacing & dark theme styling */
-        [data-testid="stSidebar"] {
-            background-color: #0f172a !important;
-            color: #f8fafc !important;
-            padding-top: 1rem !important;
-        }
-
-        [data-testid="stSidebar"] * {
-            color: #f8fafc !important;
-        }
-
-        [data-testid="stSidebar"] .stSelectbox label,
-        [data-testid="stSidebar"] .stRadio label {
-            color: #cbd5e1 !important;
-            font-weight: 600;
-        }
-
-        /* Dark file uploader styling inside sidebar */
-        [data-testid="stFileUploader"] {
-            background-color: #1e293b !important;
-            border: 1px dashed #475569 !important;
-            border-radius: 10px !important;
-            padding: 0.75rem !important;
-        }
-
-        [data-testid="stFileUploader"] label {
-            color: #f8fafc !important;
-            font-weight: 600 !important;
-        }
-
-        [data-testid="stFileUploader"] small,
-        [data-testid="stFileUploader"] [data-testid="stCaptionContainer"] p,
-        [data-testid="stFileUploader"] span:not(button span) {
-            color: #0f172a !important;
-            font-size: 0.78rem !important;
-            font-weight: 600 !important;
-        }
-
-        [data-testid="stFileUploader"] button {
-            background-color: #334155 !important;
-            color: #ffffff !important;
-            border: 1px solid #475569 !important;
-            border-radius: 8px !important;
-        }
-
-        /* Compact sidebar element spacing */
+        /* Sidebar compact spacing. Sidebar colours come from
+           [theme.light.sidebar] / [theme.dark.sidebar] in config.toml, so the
+           blanket `[data-testid="stSidebar"] *` colour override is gone — it
+           used to repaint Streamlit's own widget text in both schemes. */
         [data-testid="stSidebar"] .element-container {
             margin-bottom: 0.35rem !important;
         }
 
         [data-testid="stSidebar"] hr {
             margin: 0.5rem 0 !important;
-            border-color: #334155 !important;
+            border-color: var(--bl-sb-border) !important;
+        }
+
+        /* File uploader — lives in the dark sidebar in both schemes */
+        [data-testid="stFileUploader"] {
+            background-color: var(--bl-sb-surface) !important;
+            border: 1px dashed var(--bl-sb-border) !important;
+            border-radius: 10px !important;
+            padding: 0.75rem !important;
+        }
+
+        [data-testid="stFileUploader"] label {
+            color: var(--bl-sb-text) !important;
+            font-weight: 600 !important;
+        }
+
+        /* Previously #0f172a — near-black text on the near-black uploader
+           panel, about 1.2:1 and effectively invisible. */
+        [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploader"] [data-testid="stCaptionContainer"] p,
+        [data-testid="stFileUploader"] span:not(button span) {
+            color: var(--bl-sb-muted) !important;
+            font-size: 0.78rem !important;
+            font-weight: 600 !important;
+        }
+
+        [data-testid="stFileUploader"] button {
+            background-color: var(--bl-sb-surface) !important;
+            color: var(--bl-sb-text) !important;
+            border: 1px solid var(--bl-sb-border) !important;
+            border-radius: 8px !important;
         }
 
         /* Tech badge pill */
@@ -165,7 +311,7 @@ def inject_custom_css() -> None:
             align-items: center;
             background: rgba(255, 255, 255, 0.08);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            color: #38bdf8 !important;
+            color: var(--bl-sb-accent) !important;
             padding: 3px 9px;
             border-radius: 20px;
             font-size: 0.75rem;
@@ -183,14 +329,14 @@ def inject_custom_css() -> None:
         .app-footer {
             text-align: center;
             padding: 1.5rem 0 1rem 0;
-            color: #64748b;
+            color: var(--bl-text-subtle);
             font-size: 0.88rem;
-            border-top: 1px solid #e2e8f0;
+            border-top: 1px solid var(--bl-border);
             margin-top: 2rem;
         }
 
         .app-footer a {
-            color: #2563eb;
+            color: var(--bl-accent);
             text-decoration: none;
             font-weight: 600;
         }
@@ -224,7 +370,7 @@ def inject_custom_css() -> None:
                     );
                     els.forEach(function(el) {
                         if (el.innerText && el.innerText.indexOf('5MB') === -1) {
-                            el.innerText = 'Limit 5MB per file \u2022 CSV';
+                            el.innerText = 'Limit 5MB per file • CSV';
                         }
                     });
                 } catch(e) {}
@@ -244,13 +390,13 @@ def render_header() -> None:
     st.markdown(
         textwrap.dedent("""
         <div style='text-align: center; padding: 0.5rem 0 1.2rem 0;'>
-            <div style='display: inline-flex; align-items: center; gap: 8px; background: #e0f2fe; color: #0284c7; padding: 4px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem;'>
+            <div style='display: inline-flex; align-items: center; gap: 8px; background: var(--bl-info-bg); color: var(--bl-accent-text); padding: 4px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem;'>
                 ⚡ Enterprise AI Financial Intelligence Platform
             </div>
-            <h1 style='color: #0f172a; font-weight: 800; font-size: 2.6rem; margin: 0; letter-spacing: -0.02em;'>
+            <h1 style='color: var(--bl-text); font-weight: 800; font-size: 2.6rem; margin: 0; letter-spacing: -0.02em;'>
                 🏦 BankLens
             </h1>
-            <p style='color: #64748b; font-size: 1.1rem; margin-top: 0.4rem; font-weight: 400;'>
+            <p style='color: var(--bl-text-subtle); font-size: 1.1rem; margin-top: 0.4rem; font-weight: 400;'>
                 Automated Financial Profiling, RAG Multi-Product Pitch Engine &amp; Default Guardrails
             </p>
         </div>
@@ -305,47 +451,49 @@ def render_transaction_table(df: pd.DataFrame) -> None:
 
 def render_profile_card(profile: CustomerProfile) -> None:
     """Render the AI customer persona, health score & risk profile summary card."""
-    risk_colour = RISK_COLOURS.get(profile.risk_profile, "#94a3b8")
+    risk_colour = RISK_COLOURS.get(profile.risk_profile, "#64748b")
     score = profile.financial_health_score
-    score_color = (
-        "#10b981" if score >= 75 else ("#f59e0b" if score >= 50 else "#ef4444")
+    score_token = (
+        "var(--bl-score-good)"
+        if score >= 75
+        else ("var(--bl-score-mid)" if score >= 50 else "var(--bl-score-bad)")
     )
 
     card_html = f"""
     <div class='glass-card'>
-        <div style='display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1rem;'>
+        <div style='display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem; border-bottom: 1px solid var(--bl-border); padding-bottom: 1rem; margin-bottom: 1rem;'>
             <div>
-                <span style='font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:#64748b; font-weight:700;'>Customer Archetype</span>
-                <h2 style='margin:0; color:#0f172a; font-weight:800; font-size:1.7rem;'>
+                <span style='font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--bl-text-subtle); font-weight:700;'>Customer Archetype</span>
+                <h2 style='margin:0; color:var(--bl-text); font-weight:800; font-size:1.7rem;'>
                     👤 {profile.financial_persona}
                 </h2>
             </div>
             <div style='display:flex; gap:12px; align-items:center;'>
-                <div style='background:#f1f5f9; border:1px solid #cbd5e1; padding:6px 16px; border-radius:30px; text-align:center;'>
-                    <span style='font-size:0.75rem; color:#64748b; font-weight:700; text-transform:uppercase;'>Health Score</span>
-                    <div style='font-size:1.2rem; font-weight:800; color:{score_color};'>{score}/100</div>
+                <div style='background:var(--bl-surface-3); border:1px solid var(--bl-border-strong); padding:6px 16px; border-radius:30px; text-align:center;'>
+                    <span style='font-size:0.75rem; color:var(--bl-text-subtle); font-weight:700; text-transform:uppercase;'>Health Score</span>
+                    <div style='font-size:1.2rem; font-weight:800; color:{score_token};'>{score}/100</div>
                 </div>
-                <div style='background:{risk_colour}; color:white; font-size:0.85rem; font-weight:700; padding:10px 18px; border-radius:30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);'>
+                <div style='background:{risk_colour}; color:#ffffff; font-size:0.85rem; font-weight:700; padding:10px 18px; border-radius:30px; box-shadow: 0 2px 10px var(--bl-shadow);'>
                     🛡️ {profile.risk_profile} Risk Profile
                 </div>
             </div>
         </div>
         <div class='grid-3col' style='display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem; margin-top:1rem;'>
-            <div style='background:#ffffff; padding:1rem; border-radius:12px; border:1px solid #e2e8f0;'>
-                <span style='font-weight:700; color:#0284c7; font-size:0.88rem;'>📈 Income Stability</span>
-                <p style='color:#334155; margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
+            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
+                <span style='font-weight:700; color:var(--bl-accent-text); font-size:0.88rem;'>📈 Income Stability</span>
+                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
                     {profile.income_stability_analysis}
                 </p>
             </div>
-            <div style='background:#ffffff; padding:1rem; border-radius:12px; border:1px solid #e2e8f0;'>
-                <span style='font-weight:700; color:#059669; font-size:0.88rem;'>🛒 Spending Breakdown</span>
-                <p style='color:#334155; margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
+            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
+                <span style='font-weight:700; color:var(--bl-success-text); font-size:0.88rem;'>🛒 Spending Breakdown</span>
+                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
                     {profile.spending_pattern_breakdown}
                 </p>
             </div>
-            <div style='background:#ffffff; padding:1rem; border-radius:12px; border:1px solid #e2e8f0;'>
-                <span style='font-weight:700; color:#d97706; font-size:0.88rem;'>⚠️ Credit Risk Rationale</span>
-                <p style='color:#334155; margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
+            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
+                <span style='font-weight:700; color:var(--bl-warning-text); font-size:0.88rem;'>⚠️ Credit Risk Rationale</span>
+                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
                     {profile.credit_risk_assessment}
                 </p>
             </div>
@@ -363,14 +511,14 @@ def render_recommendation(profile: CustomerProfile) -> None:
 
     with col_p1:
         card1_html = f"""
-        <div style='background: #eff6ff; border: 2px solid #2563eb; border-radius: 14px; padding: 1.25rem; height: 100%;'>
-            <div style='background:#2563eb; color:white; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700; display:inline-block; margin-bottom:0.6rem;'>
+        <div style='background: var(--bl-primary-bg); border: 2px solid var(--bl-primary-border); border-radius: 14px; padding: 1.25rem; height: 100%;'>
+            <div style='background:var(--bl-primary-chip); color:#ffffff; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700; display:inline-block; margin-bottom:0.6rem;'>
                 🥇 PRIMARY PRODUCT OFFER
             </div>
-            <h3 style='color:#1e3a5f; margin:0 0 0.5rem 0; font-weight:800;'>
+            <h3 style='color:var(--bl-primary-title); margin:0 0 0.5rem 0; font-weight:800;'>
                 🏆 {profile.primary_product}
             </h3>
-            <p style='color:#334155; font-size:0.95rem; line-height:1.55; margin:0;'>
+            <p style='color:var(--bl-body); font-size:0.95rem; line-height:1.55; margin:0;'>
                 {profile.primary_reason}
             </p>
         </div>
@@ -379,14 +527,14 @@ def render_recommendation(profile: CustomerProfile) -> None:
 
     with col_p2:
         card2_html = f"""
-        <div style='background: #f0fdf4; border: 2px solid #16a34a; border-radius: 14px; padding: 1.25rem; height: 100%;'>
-            <div style='background:#16a34a; color:white; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700; display:inline-block; margin-bottom:0.6rem;'>
+        <div style='background: var(--bl-secondary-bg); border: 2px solid var(--bl-secondary-border); border-radius: 14px; padding: 1.25rem; height: 100%;'>
+            <div style='background:var(--bl-secondary-chip); color:#ffffff; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700; display:inline-block; margin-bottom:0.6rem;'>
                 🥈 SECONDARY CROSS-SELL OFFER
             </div>
-            <h3 style='color:#14532d; margin:0 0 0.5rem 0; font-weight:800;'>
+            <h3 style='color:var(--bl-secondary-title); margin:0 0 0.5rem 0; font-weight:800;'>
                 💎 {profile.secondary_product}
             </h3>
-            <p style='color:#334155; font-size:0.95rem; line-height:1.55; margin:0;'>
+            <p style='color:var(--bl-body); font-size:0.95rem; line-height:1.55; margin:0;'>
                 {profile.secondary_reason}
             </p>
         </div>
@@ -434,13 +582,13 @@ RESOURCES: {', '.join(profile.retrieved_sources)}
 
     points_html = "".join(
         [
-            f"<li style='margin-bottom: 0.6rem; color: #1e293b; font-size: 0.96rem; line-height: 1.5;'>{pt}</li>"
+            f"<li style='margin-bottom: 0.6rem; color: var(--bl-hook-text); font-size: 0.96rem; line-height: 1.5;'>{pt}</li>"
             for pt in profile.rm_hook_points
         ]
     )
 
     hook_box_html = f"""
-    <div style='background: #f8fafc; border-left: 5px solid #0284c7; border-radius: 8px; padding: 1.2rem 1.5rem; margin-bottom: 1.5rem;'>
+    <div style='background: var(--bl-hook-bg); border-left: 5px solid var(--bl-hook-border); border-radius: 8px; padding: 1.2rem 1.5rem; margin-bottom: 1.5rem;'>
         <ul style='margin: 0; padding-left: 1.2rem;'>
             {points_html}
         </ul>
@@ -460,8 +608,8 @@ RESOURCES: {', '.join(profile.retrieved_sources)}
     for idx, source in enumerate(profile.retrieved_sources):
         with cols[idx % len(cols)]:
             tag_html = f"""
-            <div style='background:#f1f5f9; border:1px solid #cbd5e1; padding:0.6rem 1rem; border-radius:8px; text-align:center;'>
-                📄 <code style='font-weight:600; color:#0f172a;'>{source}</code>
+            <div style='background:var(--bl-surface-3); border:1px solid var(--bl-border-strong); padding:0.6rem 1rem; border-radius:8px; text-align:center;'>
+                📄 <code style='font-weight:600; color:var(--bl-text);'>{source}</code>
             </div>
             """
             st.markdown(textwrap.dedent(tag_html), unsafe_allow_html=True)

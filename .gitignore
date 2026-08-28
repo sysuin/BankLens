@@ -2,6 +2,7 @@
 .env
 *.pem
 docs/
+.claude/
 *_summary.txt
 
 # ChromaDB persisted data
