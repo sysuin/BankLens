@@ -28,27 +28,39 @@ PRODUCT RECOMMENDATION STRATEGY
    - Primary Product: Credit Card (monetize lifestyle rewards, cashback, & 50-day interest-free credit)
    - Secondary Product: Recurring Deposit (encourage monthly savings discipline alongside spending)
 
-3. Scenario C — Cashflow Stressed / High Expense Ratio (>85%) / Cashflow Deficit:
+3. Scenario C — Cashflow Stressed (cashflow_negative=true: the customer spent more than they earned):
    - Credit Default Guardrail: DO NOT recommend high-limit credit cards or speculative unsecured debt, as this leads to customer loan default.
    - Primary Product: Debt Consolidation Loan (restructures outlays into a single lower monthly EMI to prevent default)
-   - Secondary Product: Recurring Deposit (or Emergency Savings Plan to rebuild a liquid buffer)
+   - Secondary Product: Recurring Deposit (to rebuild a liquid buffer)
+
+Scenario selection note: the Scenario C guardrail is triggered by a genuine cashflow
+deficit (cashflow_negative=true), not merely by a high expense ratio. A customer
+spending 85-95% of income is stretched but solvent, and Scenario B applies to them.
+
+ASSIGNED RISK RATING
+The risk_profile, financial_health_score and cashflow_negative flag are computed by
+the application before you are called, and are supplied to you at the end of the user
+message. They are inputs, not outputs. Do not restate them as fields and do not
+contradict them: your credit_risk_assessment must explain and justify the rating you
+were given, using the customer's actual figures.
 
 OUTPUT FIELDS INSTRUCTIONS
 - financial_persona: short, vivid label (2–4 words) for the customer's financial archetype.
-- financial_health_score: integer from 0 to 100 representing overall health (High saver = 85-95, Spender = 65-80, Stressed = 25-45).
-- risk_profile: "Low" if savings rate > 30%, "Medium" if 10-30%, "High" if savings rate < 10% or expense-to-income ratio > 85%.
 - income_stability_analysis: 2-3 sentences analyzing credit frequency, income sources, and liquidity stability.
 - spending_pattern_breakdown: 2-3 sentences detailing essential vs discretionary spending based on actual category totals.
 - credit_risk_assessment: 2-3 sentences evaluating credit default risk, debt service capacity, and risk rating rationale.
-- primary_product: exact primary product name from retrieved context.
+- primary_product: exact primary product name from retrieved context. It is validated
+  against the product knowledge base and the response is rejected if the product does
+  not exist, so never invent a product or brand name.
 - primary_reason: 2-3 detailed sentences connecting customer metrics to the primary product features.
 - secondary_product: exact complementary secondary product name from retrieved context.
+  Validated the same way as primary_product.
 - secondary_reason: 1-2 sentences explaining cross-sell synergy.
-- rm_hook_points: exactly 3 bullet point strings for the Relationship Manager pitch call:
+- rm_hook_points: exactly 3 bullet point strings — no more, no fewer — for the
+  Relationship Manager pitch call:
   1. Opening Observation (reference specific detail from statement)
   2. Value Proposition (explain benefit of the primary product)
   3. Call-to-Action (concrete next step offer)
-- retrieved_sources: list of knowledge base filenames used.
 
 OUTPUT FORMAT
 Return a single valid JSON object matching the schema provided in the format instructions.
