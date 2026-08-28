@@ -141,7 +141,6 @@ jobs:
             # Stop and remove the existing container (ignore errors if not running)
             docker stop banklens_app || true
             docker rm banklens_app || true
-            rm -rf /home/ec2-user/chroma_db/*
 
             # Start a new container with the updated image
             # The OPENAI_API_KEY is passed in as an environment variable
