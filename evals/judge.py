@@ -27,7 +27,11 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.pipeline.agent import CustomerProfile
-from app.pipeline.analyzer import FinancialMetrics
+from app.pipeline.analyzer import (
+    FinancialMetrics,
+    RISK_LOW_MIN_SAVINGS_RATE,
+    RISK_MEDIUM_MIN_SAVINGS_RATE,
+)
 
 logger = get_logger(__name__)
 
@@ -56,23 +60,104 @@ entirely, and do not reward fluency.
 You are given three things: the customer's computed metrics, the product
 documentation that was retrieved, and the generated profile.
 
+You are also given a <derived_figures> block. It restates the same metrics in
+the forms a profile actually quotes them in — ratios as percentages, category
+totals pulled out of their nested structure. Anything appearing there is
+supported, by definition. Do not re-derive it and do not second-guess it.
+
 Mark a claim unsupported if it:
-  - states a figure that does not appear in the metrics and cannot be derived
-    from them by simple arithmetic
+  - states a figure that appears neither in the metrics nor in the derived
+    figures, and cannot be reached from them by simple arithmetic
   - describes a product feature absent from the retrieved documentation
   - asserts something about the customer's behaviour that the transaction
     metrics do not evidence
 
+A ratio written as a percentage is the same figure, not a new one: an
+expense_to_income_ratio of 0.88 fully supports "88%". A category total quoted
+from the derived figures is supported however it is phrased. Flagging either of
+these is the most common way this evaluation goes wrong.
+
 Do NOT mark a claim unsupported merely because it is an interpretation or a
 judgement, provided the underlying figures are real. "Disciplined saver" is a
-fair reading of a 75% savings rate.
+fair reading of a 75% savings rate. The same applies to "balanced",
+"significant", "essential", "discretionary", "disciplined" and similar
+characterisations: these are readings of real figures, not factual claims, and
+flagging them is out of scope. Splitting spending into essential and
+discretionary is an expected part of the task, not an invented statistic.
+
+A sentence that pairs a real figure with an interpretation is supported if the
+figure is real. Judge the figure, not the framing.
+
+If you find yourself writing that a figure is correct and then listing it as
+unsupported, it is supported. Report it as supported.
 
 Also report whether the narrative argues against the risk rating it was
 assigned. The rating is computed by the application and is not the model's to
 dispute; a narrative that reasons toward a different rating is a defect.
 
+The rating is banded on savings rate alone, by this exact rule:
+
+    Low     savings rate >= LOW_MIN%
+    Medium  savings rate >= MEDIUM_MIN% and < LOW_MIN%
+    High    savings rate <  MEDIUM_MIN%
+
+Expenses exclude internal savings transfers, so the savings rate and the
+expense-to-income ratio are the same measurement:
+savings_rate = 100 - (expense_to_income_ratio * 100). An 88% expense ratio is a
+12% savings rate, which is Medium — not High, however stressful 88% sounds.
+
+Apply that rule and nothing else. Do not substitute your own view of what
+counts as risky: a narrative describing an 88% expense ratio as stretched but
+solvent is explaining a Medium rating correctly, not contradicting it. Set
+contradicts_assigned_risk only when the narrative explicitly argues for a band
+different from the one it was given.
+
 Quote unsupported claims verbatim so they can be traced.
 """
+
+
+def _risk_banded_prompt() -> str:
+    """
+    Fill the banding thresholds into the rubric from the analyzer's constants.
+
+    The judge was reading an 88% expense ratio as High risk because it had been
+    told to check the rating without being told what the rating means. Sourcing
+    the numbers from RISK_LOW_MIN_SAVINGS_RATE / RISK_MEDIUM_MIN_SAVINGS_RATE
+    keeps the rubric correct if the bands are ever retuned.
+    """
+    return JUDGE_SYSTEM_PROMPT.replace(
+        "LOW_MIN", f"{RISK_LOW_MIN_SAVINGS_RATE:g}"
+    ).replace("MEDIUM_MIN", f"{RISK_MEDIUM_MIN_SAVINGS_RATE:g}")
+
+
+def _derived_figures(metrics: FinancialMetrics) -> str:
+    """
+    Restate the metrics in the forms a generated profile actually quotes.
+
+    The judge kept rejecting true claims for two reasons, and both are
+    presentation rather than reasoning. Ratios are stored as decimals but
+    written as percentages, so "88%" looked absent next to 0.88. And
+    top_categories is a list of dicts, so an exact category total looked
+    invented next to its own nested value.
+
+    Handing the judge these forms directly removes the derivation step instead
+    of asking it to be better at arithmetic.
+    """
+    lines = [
+        f"total_income = {metrics.total_income:,.2f}",
+        f"total_expenses = {metrics.total_expenses:,.2f}",
+        f"savings_amount = {metrics.savings_amount:,.2f}",
+        f"savings_rate = {metrics.savings_rate_pct:.2f}%",
+        f"expense_to_income_ratio = {metrics.expense_to_income_ratio:.4f}"
+        f" = {metrics.expense_to_income_ratio * 100:.2f}% of income spent",
+        f"share_of_income_saved = {metrics.savings_rate_pct:.2f}%",
+        f"cashflow_negative = {metrics.is_cashflow_negative}",
+        f"financial_health_score = {metrics.financial_health_score}",
+        "top spending categories (exact totals):",
+    ]
+    for category in metrics.top_categories:
+        lines.append(f"  - {category['category']} = {category['total_spent']:,.2f}")
+    return "\n".join(lines)
 
 
 def judge_groundedness(
@@ -96,12 +181,15 @@ def judge_groundedness(
         f"[Source: {chunk['source']}]\n{chunk['content']}" for chunk in retrieved_chunks
     )
 
+    derived_block = _derived_figures(metrics)
+
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", JUDGE_SYSTEM_PROMPT + "\n\n{format_instructions}"),
+            ("system", _risk_banded_prompt() + "\n\n{format_instructions}"),
             (
                 "human",
                 "<computed_metrics>\n{metrics}\n</computed_metrics>\n\n"
+                "<derived_figures>\n{derived}\n</derived_figures>\n\n"
                 "<assigned_risk>{risk}</assigned_risk>\n\n"
                 "<retrieved_context>\n{context}\n</retrieved_context>\n\n"
                 "<generated_profile>\n{profile}\n</generated_profile>",
@@ -118,6 +206,7 @@ def judge_groundedness(
     verdict: GroundednessVerdict = (prompt | judge | parser).invoke(
         {
             "metrics": metrics.model_dump_json(indent=2),
+            "derived": derived_block,
             "risk": metrics.risk_profile,
             "context": context_block,
             "profile": profile.model_dump_json(indent=2),
