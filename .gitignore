@@ -1,7 +1,7 @@
 # Environment variables, keys, and personal notes — never commit
 .env
 *.pem
-BankLens.md
+docs/
 *_summary.txt
 
 # ChromaDB persisted data
