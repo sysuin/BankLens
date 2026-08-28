@@ -233,3 +233,87 @@ class TestMetricsCarryRiskFields:
     def test_cashflow_negative_flag_tracks_savings_amount(self, standard_df):
         metrics = compute_metrics(standard_df)
         assert metrics.is_cashflow_negative == (metrics.savings_amount < 0)
+
+
+class TestSpendingSplit:
+    """The essential/discretionary decomposition of consumption spending."""
+
+    @staticmethod
+    def _df(rows):
+        return pd.DataFrame(
+            rows, columns=["date", "description", "amount", "type", "category"]
+        )
+
+    def test_classification_covers_the_categorizer_vocabulary(self):
+        """
+        Every category the categorizer can emit must be deliberately placed.
+
+        If a category is added to KEYWORD_MAP without being classified here, it
+        would silently land in unclassified_expenses — this test turns that
+        into a loud failure instead.
+        """
+        from app.pipeline.analyzer import (
+            DISCRETIONARY_CATEGORIES,
+            ESSENTIAL_CATEGORIES,
+            NON_CONSUMPTION_CATEGORIES,
+        )
+        from app.pipeline.categorizer import KEYWORD_MAP
+
+        placed = (
+            ESSENTIAL_CATEGORIES
+            | DISCRETIONARY_CATEGORIES
+            | NON_CONSUMPTION_CATEGORIES
+            | {"Others"}
+        )
+        unplaced = set(KEYWORD_MAP) - placed
+        assert not unplaced, f"Categories with no classification: {unplaced}"
+
+        overlap = ESSENTIAL_CATEGORIES & DISCRETIONARY_CATEGORIES
+        assert not overlap, f"Categories classified as both: {overlap}"
+
+    def test_split_sums_to_total_expenses(self):
+        df = self._df(
+            [
+                ("2024-03-01", "Salary", 100000.0, "Credit", "Income"),
+                ("2024-03-02", "Rent", 30000.0, "Debit", "Rent & Housing"),
+                ("2024-03-03", "Groceries", 8000.0, "Debit", "Food"),
+                ("2024-03-04", "Mall", 5000.0, "Debit", "Shopping"),
+                ("2024-03-05", "Netflix", 500.0, "Debit", "Subscriptions"),
+                ("2024-03-06", "Mystery UPI", 1500.0, "Debit", "Others"),
+                ("2024-03-07", "FD Transfer", 20000.0, "Debit", "Savings"),
+            ]
+        )
+        m = compute_metrics(df)
+        assert m.essential_expenses == 38000.0
+        assert m.discretionary_expenses == 5500.0
+        assert m.unclassified_expenses == 1500.0
+        # The three parts reconstruct consumption expenses exactly.
+        assert (
+            m.essential_expenses + m.discretionary_expenses + m.unclassified_expenses
+            == m.total_expenses
+        )
+
+    def test_savings_transfers_stay_out_of_the_split(self):
+        df = self._df(
+            [
+                ("2024-03-01", "Salary", 50000.0, "Credit", "Income"),
+                ("2024-03-02", "SIP Mutual Fund", 20000.0, "Debit", "Savings"),
+                ("2024-03-03", "Rent", 15000.0, "Debit", "Rent & Housing"),
+            ]
+        )
+        m = compute_metrics(df)
+        assert m.essential_expenses == 15000.0
+        assert m.discretionary_expenses == 0.0
+        assert m.unclassified_expenses == 0.0
+
+    def test_others_is_reported_unclassified_not_binned(self):
+        df = self._df(
+            [
+                ("2024-03-01", "Salary", 50000.0, "Credit", "Income"),
+                ("2024-03-02", "Unknown Merchant", 9000.0, "Debit", "Others"),
+            ]
+        )
+        m = compute_metrics(df)
+        assert m.unclassified_expenses == 9000.0
+        assert m.essential_expenses == 0.0
+        assert m.discretionary_expenses == 0.0

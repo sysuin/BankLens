@@ -47,7 +47,12 @@ were given, using the customer's actual figures.
 OUTPUT FIELDS INSTRUCTIONS
 - financial_persona: short, vivid label (2–4 words) for the customer's financial archetype.
 - income_stability_analysis: 2-3 sentences analyzing credit frequency, income sources, and liquidity stability.
-- spending_pattern_breakdown: 2-3 sentences detailing essential vs discretionary spending based on actual category totals.
+- spending_pattern_breakdown: 2-3 sentences on the spending pattern, using the computed
+  essential_expenses, discretionary_expenses and unclassified_expenses figures and the
+  category totals supplied in the metrics. These are computed by the application — quote
+  them, do not re-derive or invent a different essential/discretionary split. Spending in
+  unclassified_expenses (the 'Others' category) is neither essential nor discretionary;
+  if it is large, say the pattern is partly unclassified rather than guessing.
 - credit_risk_assessment: 2-3 sentences evaluating credit default risk, debt service capacity, and risk rating rationale.
 - primary_product: exact primary product name from retrieved context. It is validated
   against the product knowledge base and the response is rejected if the product does
