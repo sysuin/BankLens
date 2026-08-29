@@ -25,7 +25,8 @@ from app.pipeline.categorizer import categorize_dataframe
 from app.pipeline.pdf_parser import parse_pdf_statement
 from app.pipeline.sanitizer import sanitize_dataframe
 from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
-from app.pipeline.agent import build_profile, CustomerProfile
+from app.pipeline.agent import CustomerProfile
+from app.pipeline.cache import cached_build_profile
 from app.ui.charts import render_income_vs_expense, render_spending_by_category
 from app.ui.components import (
     inject_custom_css,
@@ -138,7 +139,12 @@ def run_ai_pipeline(metrics, categorized_df) -> CustomerProfile | None:
             "   * Generating grounded response with fallback retry protection..."
         )
         try:
-            profile = build_profile(metrics, retrieved_chunks)
+            profile, from_cache = cached_build_profile(metrics, retrieved_chunks)
+            if from_cache:
+                st.write(
+                    "   * ⚡ Served from **response cache** — identical inputs, "
+                    "no LLM call spent"
+                )
         except Exception as e:
             status.update(label="❌ Pipeline Failed at LLM Synthesis", state="error")
             st.error(f"Profile synthesis error: {e}")
@@ -165,6 +171,8 @@ def main() -> None:
         st.session_state.active_tab = "profiler"
     if "ai_profile" not in st.session_state:
         st.session_state.ai_profile = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
     about_html = """
     **BankLens Enterprise v2.0** is a commercial-grade AI financial intelligence platform designed for **Bank Relationship Managers (RMs)**.
@@ -320,7 +328,7 @@ def main() -> None:
         return
 
     # ── Custom Styled Tab Navigation Bar ─────────────────────────────────────
-    col_nav1, col_nav2, col_nav3 = st.columns(3)
+    col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
 
     with col_nav1:
         if st.button(
@@ -353,6 +361,15 @@ def main() -> None:
             ),
         ):
             st.session_state.active_tab = "profiler"
+            st.rerun()
+
+    with col_nav4:
+        if st.button(
+            "💬 Ask BankLens",
+            use_container_width=True,
+            type=("primary" if st.session_state.active_tab == "chat" else "secondary"),
+        ):
+            st.session_state.active_tab = "chat"
             st.rerun()
 
     st.markdown(
@@ -435,6 +452,50 @@ def main() -> None:
             render_recommendation(prof)
 
     # Render application footer
+    # ── View 4: Ask BankLens (agentic chat over the analyzed statement) ──────
+    elif st.session_state.active_tab == "chat":
+        st.markdown("#### 💬 Ask BankLens about this statement")
+        st.caption(
+            "A tool-calling assistant: it can fetch the computed metrics, search "
+            "the product knowledge base, and inspect category spending. Answers "
+            "stream in live."
+        )
+
+        # History is keyed to the loaded statement so switching statements
+        # cannot leak one customer's conversation into another's.
+        statement_key = st.session_state.get("loaded_statement_key")
+        current_key = (
+            f"{metrics.period}|{metrics.transaction_count}|{metrics.total_income}"
+        )
+        if statement_key != current_key:
+            st.session_state.chat_history = []
+            st.session_state.loaded_statement_key = current_key
+
+        from langchain_core.messages import AIMessage as _AI
+
+        for message in st.session_state.chat_history:
+            role = "assistant" if isinstance(message, _AI) else "user"
+            with st.chat_message(role):
+                st.markdown(message.content)
+
+        if question := st.chat_input("e.g. Why is this customer rated Low risk?"):
+            with st.chat_message("user"):
+                st.markdown(question)
+            from app.pipeline.chat import run_chat_turn
+
+            with st.chat_message("assistant"):
+                try:
+                    st.write_stream(
+                        run_chat_turn(
+                            question,
+                            st.session_state.chat_history,
+                            metrics,
+                            categorized_df,
+                        )
+                    )
+                except Exception as e:
+                    st.error(f"Chat error: {e}")
+
     render_footer()
 
 
