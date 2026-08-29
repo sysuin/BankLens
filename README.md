@@ -29,7 +29,12 @@ grounded in a hybrid RAG pipeline over a curated banking product knowledge base.
 6. **Profile** — GPT-4o writes the analysis, the two product recommendations
    and three RM call hooks, then output guardrails validate the products
    against the knowledge base before anything is displayed
-7. **Display** — results are presented across three interactive Streamlit views
+7. **Display** — results are presented across four interactive Streamlit views,
+   including **Ask BankLens**, a tool-calling chat assistant that answers
+   questions about the analyzed statement with live token streaming
+8. **Integrate** — the whole pipeline is also exposed as an **MCP server**
+   (`mcp_server.py`), so Claude Desktop or any MCP client can call BankLens
+   as a tool
 
 Every stage is covered by an evaluation suite: 65 golden cases run free on
 every push, and a sampled paid layer scores retrieval quality and groundedness.
@@ -56,7 +61,8 @@ CSV / PDF Upload
     │              (internal Savings transfers excluded from expenses)
     │              Risk band + health score computed here, deterministically
     ▼
-[rag.py]           Hybrid retrieval: ChromaDB dense + BM25 sparse → RRF fusion
+[rag.py]           Multi-query expansion → hybrid retrieval per variant
+    │              (ChromaDB dense + BM25 sparse → RRF) → cross-variant RRF
     │              15 candidates
     ▼
 [reranker.py]      Listwise rerank (or local cross-encoder) → top 4 passages
@@ -65,7 +71,7 @@ CSV / PDF Upload
 [agent.py]         LCEL chain: prompt + metrics + risk + context → GPT-4o
     │              → Pydantic + semantic guardrails + corrective retry
     ▼
-[main.py]          Streamlit: Ledger view | Analytics view | AI Profiler view
+[main.py]          Streamlit: Ledger | Analytics | AI Profiler | Ask BankLens (chat)
 ```
 
 The boundary between the deterministic and probabilistic halves is deliberate.
@@ -255,6 +261,93 @@ is a subtle way to lose grounding.
 
 ---
 
+## Multi-query retrieval
+
+The retrieval query is expanded into facet-specific rewrites (savings vs
+credit vs liquidity) by the mini model at temperature 0, each variant runs the
+full hybrid search, and the per-variant rankings are fused with **anchored
+RRF** — the original query at full weight, rewrites at half. Enabled by
+default **because the A/B earned it** — the same evidence standard that keeps
+the reranker disabled:
+
+| top-4, no reranker | hit | MRR | NDCG | precision | harmful |
+|---|---|---|---|---|---|
+| single query | 1.000 | 0.785 | 0.626 | 0.419 | 0.400 |
+| multi-query (anchored) | 1.000 | **0.838** | **0.635** | 0.419 | **0.354** |
+
+No metric regresses; MRR and nDCG improve, and credit-product chunks shown to
+cashflow-deficit customers drop. The anchoring is itself a measured story: the
+first, unweighted fusion cut harmful content by 92% — and the grounded eval
+layer then caught it diluting `credit_card.md` out of retrieval for a
+Medium-band customer whose *correct* recommendation it was. Two eval layers,
+two different failure modes of one feature. Cost: one mini-model call plus two
+extra retrievals (~1s). Reproduce with
+`python -m evals.run_evals --multi-query-ab`.
+
+---
+
+## Vision OCR for scanned statements (Engine 3)
+
+Engines 1 and 2 read the PDF text layer; a scanned statement has none. When
+both extract nothing, Engine 3 renders the pages to images (pypdfium2) and
+asks GPT-4o vision to transcribe the transaction table into the same
+canonical schema, with a strict do-not-invent rule — unreadable rows are
+skipped, never guessed.
+
+**Off by default, deliberately.** The PII sanitizer masks account and card
+numbers in *text* before anything reaches an external model, but a page image
+cannot be masked — enabling `VISION_OCR_ENABLED` sends the raw statement
+image to the vision API. Text extracted back *is* still sanitized before
+profiling. Try it: `data/sample_4_scanned_statement.pdf` is an image-only
+statement that Engines 1–2 cannot read and Engine 3 transcribes 12/12.
+
+---
+
+## Ask BankLens — the agentic chat tab
+
+The profiling pipeline is deliberately non-agentic: one LLM call, structured
+output, no runtime decisions. The chat tab is the deliberately agentic
+counterpart. The model gets three tools — `get_customer_metrics`,
+`search_products`, `get_category_spending` — and a hand-written agent loop
+(`bind_tools` + a bounded while loop, no framework executor) decides which to
+call, feeds results back, and streams the final answer token by token via
+`st.write_stream`. Tools close over the loaded statement, so the model can
+never query a different customer than the one on screen; chat history resets
+when the statement changes.
+
+---
+
+## BankLens as an MCP server
+
+`mcp_server.py` exposes the pipeline over the Model Context Protocol:
+`analyze_statement` (full profile), `compute_statement_metrics` (free,
+deterministic, no LLM), and `search_products` (hybrid KB search). The wrapper
+is deliberately thin — it re-exports the same functions the app calls, so the
+MCP surface cannot drift from the product. Claude Desktop config:
+
+```json
+"banklens": {
+    "command": "/path/to/BankLens/.venv/bin/python",
+    "args": ["/path/to/BankLens/mcp_server.py"]
+}
+```
+
+---
+
+## Profile response cache
+
+Generation runs at temperature 0.2, so identical statements used to produce
+slightly different profiles — and pay for GPT-4o each time. Profiles are now
+cached on an exact key hashing every input that determines the output:
+metrics, retrieved chunks, the system prompt file, and the model name — so
+editing the prompt or switching models invalidates automatically (same
+philosophy as the vector-index fingerprint). This is exact-key response
+caching, **not** semantic caching, on purpose: two statements differing by
+one transaction are different customers and must never share a profile. The
+UI labels cached results rather than passing them off as fresh generations.
+
+---
+
 ## How the LangChain agent works
 
 `agent.py` builds an LCEL chain:
@@ -353,6 +446,7 @@ while the narrower `judge_respects_assigned_risk` check remains blocking.
 python -m evals.run_evals                   # free
 python -m evals.run_evals --headroom        # free, retrieval headroom
 python -m evals.run_evals --retrieval-ab    # reranker A/B (needs a key)
+python -m evals.run_evals --multi-query-ab  # query-expansion A/B (needs a key)
 python -m evals.run_evals --with-llm --judge
 ```
 
@@ -378,7 +472,10 @@ banklens/
 │   │   ├── sanitizer.py           # PII masking guard
 │   │   ├── categorizer.py         # 2-stage hybrid categorizer
 │   │   ├── analyzer.py            # Metrics + deterministic risk & health score
-│   │   ├── rag.py                 # ChromaDB + BM25 hybrid retrieval
+│   │   ├── rag.py                 # Multi-query + ChromaDB/BM25 hybrid retrieval
+│   │   ├── vision_ocr.py          # Engine 3: GPT-4o vision for scanned PDFs
+│   │   ├── cache.py               # Exact-key profile response cache
+│   │   ├── chat.py                # Tool-calling chat agent (Ask BankLens)
 │   │   ├── reranker.py            # Listwise LLM / cross-encoder reranking
 │   │   └── agent.py               # LCEL chain + GPT-4o + output guardrails
 │   └── ui/
@@ -390,6 +487,7 @@ banklens/
 │   ├── retrieval.py               # Retrieval metrics and reranker A/B
 │   ├── judge.py                   # LLM-as-judge groundedness scoring
 │   └── run_evals.py               # Scorecard runner
+├── mcp_server.py                  # BankLens as an MCP server
 ├── knowledge_base/                # 10 product markdown files (RAG corpus)
 ├── data/                          # Demo statements (3 archetypes, CSV + PDF)
 ├── prompts/
@@ -498,6 +596,12 @@ evaluation suite over all 65 golden cases.
 | `RERANK_BACKEND` | No | `none` | `llm`, `cross_encoder`, or `none` — see [Why reranking ships disabled](#why-reranking-ships-disabled) |
 | `CROSS_ENCODER_MODEL` | No | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Used when backend is `cross_encoder` |
 | `RERANK_PASSAGE_CHARS` | No | `600` | Characters of each candidate shown to the reranker |
+| `MULTI_QUERY_ENABLED` | No | `true` | Facet-rewrite query expansion — see [Multi-query retrieval](#multi-query-retrieval) |
+| `MULTI_QUERY_COUNT` | No | `2` | Rewrites generated per query |
+| `VISION_OCR_ENABLED` | No | `false` | Engine 3 for scanned PDFs — sends page images to the vision API |
+| `VISION_OCR_MAX_PAGES` | No | `4` | Pages rendered per scanned statement |
+| `PROFILE_CACHE_ENABLED` | No | `true` | Exact-key response cache for generated profiles |
+| `PROFILE_CACHE_DIR` | No | `./.profile_cache` | Cache storage directory |
 | `LANGCHAIN_TRACING_V2` | No | `false` | Enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | No | — | LangSmith API key |
 | `LANGCHAIN_PROJECT` | No | `BankLens` | LangSmith project name |
