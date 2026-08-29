@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     langchain_api_key: str = ""
     langchain_project: str = "BankLens"
 
+    # Modern spelling of the same credential. A present key is treated as
+    # intent to trace — nobody puts a LangSmith key in .env hoping for
+    # nothing, which is what used to happen when only the legacy LANGCHAIN_*
+    # names were recognised.
+    langsmith_api_key: str = ""
+
     # ── ChromaDB ──────────────────────────────────────────────────────────────
     # Local directory where ChromaDB persists its index between runs
     chroma_persist_dir: str = "./chroma_db"
@@ -164,10 +170,13 @@ settings = Settings()
 # LangChain reads tracing configuration from the process environment, not from
 # this Settings object. Exporting here is what actually turns tracing on when
 # .env asks for it; setdefault so a real environment variable still wins.
-if (
-    settings.langchain_tracing_v2.strip().lower() == "true"
-    and settings.langchain_api_key
-):
+_tracing_key = settings.langsmith_api_key or settings.langchain_api_key
+_tracing_wanted = settings.langchain_tracing_v2.strip().lower() == "true" or bool(
+    settings.langsmith_api_key
+)
+if _tracing_wanted and _tracing_key:
+    os.environ.setdefault("LANGSMITH_TRACING", "true")
+    os.environ.setdefault("LANGSMITH_API_KEY", _tracing_key)
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-    os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
+    os.environ.setdefault("LANGCHAIN_API_KEY", _tracing_key)
     os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
