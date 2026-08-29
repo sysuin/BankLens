@@ -132,6 +132,30 @@ def report_bm25_headroom() -> None:
     print(f"{'headroom':<14}{gap:>8.3f}   (hit rate recoverable by reranking)")
 
 
+def report_multi_query_ab() -> None:
+    """Print the multi-query A/B over the golden queries. Requires an API key."""
+    from evals.retrieval import compare_multi_query
+
+    result = compare_multi_query(golden_queries())
+
+    print(
+        f"\nMulti-query A/B — {result['variant_count']} rewrites + original, "
+        f"no reranker, top-{result['final_k']}"
+    )
+    print(f"{'':<14}{'hit':>8}{'mrr':>8}{'ndcg':>8}{'prec':>8}{'harmful':>9}")
+    for label, key in (("single query", "baseline"), ("multi-query", "multi_query")):
+        means = result[key]
+        print(
+            f"{label:<14}{means['hit']:>8.3f}{means['mrr']:>8.3f}"
+            f"{means['ndcg']:>8.3f}{means['precision']:>8.3f}{means['harmful']:>9.3f}"
+        )
+    delta = result["delta"]
+    print(
+        f"{'delta':<14}{delta['hit']:>+8.3f}{delta['mrr']:>+8.3f}"
+        f"{delta['ndcg']:>+8.3f}{delta['precision']:>+8.3f}{delta['harmful']:>+9.3f}"
+    )
+
+
 def report_reranker_ab() -> None:
     """Print the reranker A/B over the golden queries. Requires an API key."""
     from evals.retrieval import compare_reranker
@@ -221,6 +245,11 @@ def main() -> int:
         help="Report BM25 retrieval headroom. Free, no API key needed.",
     )
     parser.add_argument(
+        "--multi-query-ab",
+        action="store_true",
+        help="Report multi-query expansion A/B over the golden queries (requires OPENAI_API_KEY).",
+    )
+    parser.add_argument(
         "--retrieval-ab",
         action="store_true",
         help="Report reranker A/B over the golden queries (requires OPENAI_API_KEY).",
@@ -241,6 +270,9 @@ def main() -> int:
 
     if args.retrieval_ab:
         report_reranker_ab()
+
+    if args.multi_query_ab:
+        report_multi_query_ab()
 
     if use_llm:
         sampled = [c for c in cases if c.include_in_llm_eval]

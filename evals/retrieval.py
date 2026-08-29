@@ -172,6 +172,41 @@ def measure_bm25_headroom(
 # ── Online: reranker A/B ──────────────────────────────────────────────────────
 
 
+def compare_multi_query(queries_by_risk: list[tuple[str, str]]) -> dict[str, dict]:
+    """
+    Run retrieval with multi-query expansion off and on over the same queries.
+
+    Reranking is held off in both arms so this measures expansion alone.
+    Requires an API key (embeddings + the variant-generation call).
+    """
+    from app.core.config import settings
+    from app.pipeline.rag import build_vector_store, retrieve
+
+    store = build_vector_store()
+    baseline, expanded = [], []
+
+    for query, risk in queries_by_risk:
+        relevant = RELEVANT_BY_RISK[risk]
+        harmful = HARMFUL_FOR_DEFICIT if risk == "High" else set()
+
+        single = retrieve(query, store, use_reranker=False, use_multi_query=False)
+        multi = retrieve(query, store, use_reranker=False, use_multi_query=True)
+
+        baseline.append(score_ranking([c["source"] for c in single], relevant, harmful))
+        expanded.append(score_ranking([c["source"] for c in multi], relevant, harmful))
+
+    base_means = mean_metrics(baseline)
+    multi_means = mean_metrics(expanded)
+
+    return {
+        "variant_count": settings.multi_query_count,
+        "final_k": settings.retrieval_k,
+        "baseline": base_means,
+        "multi_query": multi_means,
+        "delta": {key: multi_means[key] - base_means[key] for key in base_means},
+    }
+
+
 def compare_reranker(queries_by_risk: list[tuple[str, str]]) -> dict[str, dict]:
     """
     Run the full hybrid pipeline with reranking off and on over the same queries.
