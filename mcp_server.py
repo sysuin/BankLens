@@ -26,7 +26,7 @@ The OPENAI_API_KEY from .env is loaded by pydantic-settings as usual.
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # MCP hosts (Claude Desktop included) launch servers from an arbitrary working
 # directory, but the pipeline resolves .env — and therefore the API key —
@@ -34,7 +34,9 @@ from mcp.server.fastmcp import FastMCP
 # server behaves identically however it is launched.
 os.chdir(Path(__file__).resolve().parent)
 
-mcp = FastMCP("banklens")
+# mcp 2.x renamed FastMCP to MCPServer; our surface (tool decorator, stdio
+# run) is unchanged across the major. Pinned >=2,<3 after migrating.
+mcp = MCPServer("banklens")
 
 
 def _analyze(csv_path: str) -> tuple:
