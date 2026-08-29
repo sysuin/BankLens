@@ -131,11 +131,26 @@ jobs:
           # Pass secrets as environment variables into the SSH session
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REPOSITORY,OPENAI_API_KEY
           script: |
+            # Fail the job on any real error. Without this, a failed pull was
+            # followed by restarting the OLD local :latest image and reporting
+            # success — a silent no-op deploy (observed 2026-08-29, when the
+            # disk filled and the pull died on "no space left on device").
+            set -e
+
             # Authenticate Docker with Amazon ECR
             aws ecr get-login-password --region $AWS_REGION \
               | docker login --username AWS --password-stdin $ECR_REPOSITORY
 
-            # Pull the latest image from ECR
+            # Reclaim disk BEFORE pulling. Each deploy leaves the previous
+            # ~1GB image behind and nothing was cleaning them up; five deploys
+            # filled the volume. The running container's image is in use and
+            # is never touched by prune.
+            docker image prune -af || true
+            df -h / | tail -1
+
+            # Pull the latest image from ECR. With set -e, a failed pull
+            # aborts HERE — the old container keeps serving and the job goes
+            # red, instead of silently redeploying stale code.
             docker pull $ECR_REPOSITORY:latest
 
             # Stop and remove the existing container (ignore errors if not running)
