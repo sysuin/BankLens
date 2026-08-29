@@ -7,6 +7,7 @@ Ingests bank statements from any commercial bank (ICICI, HDFC, SBI, Axis, Kotak,
 """
 
 import io
+from pathlib import Path
 import re
 import pandas as pd
 import pdfplumber
@@ -303,7 +304,29 @@ def parse_pdf_statement(file_or_bytes) -> pd.DataFrame:
         raise ValueError(f"Could not read PDF bank statement. Error: {e}")
 
     if not rows:
-        raise ValueError("No transaction records found in the uploaded PDF statement.")
+        # Engine 3: both text-layer engines found nothing, which is the
+        # signature of a scanned statement. Vision OCR is opt-in
+        # (VISION_OCR_ENABLED) because a page image cannot be PII-masked
+        # before leaving the process; extract_via_vision returns [] when
+        # disabled, so the error below stays the outcome by default.
+        from app.pipeline.vision_ocr import extract_via_vision
+
+        # pdf_file is BytesIO for uploads/bytes, or a filesystem path string.
+        if hasattr(pdf_file, "seek"):
+            pdf_file.seek(0)
+            pdf_bytes = pdf_file.read()
+        else:
+            pdf_bytes = Path(pdf_file).read_bytes()
+        rows = extract_via_vision(pdf_bytes)
+        is_text_engine = False
+
+    if not rows:
+        raise ValueError(
+            "No transaction records found in the uploaded PDF statement. "
+            "If this is a scanned statement, vision OCR can read it — "
+            "set VISION_OCR_ENABLED=true (note: this sends page images to the "
+            "vision API before PII masking can occur)."
+        )
 
     df = pd.DataFrame(rows)
 
