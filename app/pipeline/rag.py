@@ -23,6 +23,8 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from pydantic import BaseModel, Field
+
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.pipeline.reranker import rerank
@@ -293,29 +295,8 @@ def build_retrieval_query(metrics) -> str:
     )
 
 
-def retrieve(
-    query: str,
-    vector_store: Chroma,
-    use_reranker: bool = True,
-) -> list[dict]:
-    """
-    Retrieve product context: hybrid fusion over a wide candidate pool, then rerank.
-
-    Both retrievers are asked for retrieval_candidate_k results rather than the
-    final retrieval_k. Fusion is used to assemble candidates, not to choose the
-    final passages — that is the reranker's job.
-
-    Args:
-        query: Natural language summary of the customer's financial position.
-        vector_store: The Chroma collection holding product embeddings.
-        use_reranker: Set False to get the raw fusion ordering. Used by the
-                      retrieval evaluation to measure the reranker's effect.
-
-    Returns:
-        Up to retrieval_k chunks as {"content": ..., "source": ...}.
-    """
-    candidate_k = max(settings.retrieval_candidate_k, settings.retrieval_k)
-
+def _fused_candidates(query: str, vector_store: Chroma, candidate_k: int) -> list[dict]:
+    """One query's hybrid candidate pool: dense + BM25, RRF-fused."""
     dense_retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": candidate_k},
@@ -343,13 +324,144 @@ def retrieve(
     else:
         results = dense_retriever.invoke(query)
 
-    candidates = [
+    return [
         {
             "content": doc.page_content,
             "source": doc.metadata.get("source", "unknown"),
         }
         for doc in results[:candidate_k]
     ]
+
+
+class QueryVariants(BaseModel):
+    """Rewritten retrieval queries produced by the multi-query expander."""
+
+    variants: list[str] = Field(
+        description="Rewrites of the query, each emphasising a different facet."
+    )
+
+
+MULTI_QUERY_PROMPT = """You rewrite a bank customer summary into alternative retrieval queries for a
+banking product knowledge base.
+
+Produce {count} rewrites, each emphasising a DIFFERENT facet of the customer's
+position — for example one focused on savings and deposit products, one on
+credit and lending suitability, one on liquidity and cashflow management.
+Keep every numeric fact from the original. Do not invent facts.
+"""
+
+
+def _generate_query_variants(query: str, count: int) -> list[str]:
+    """
+    Rewrite the query `count` ways with the mini model.
+
+    Temperature 0: the variants differ because the prompt demands different
+    facets, not because of sampling — so retrieval stays reproducible, which
+    the evaluation harness depends on. Any failure returns [] and retrieval
+    proceeds single-query; query expansion must never break retrieval.
+    """
+    from langchain_core.output_parsers import PydanticOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+
+    if not settings.openai_api_key:
+        return []
+
+    try:
+        parser = PydanticOutputParser(pydantic_object=QueryVariants)
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", MULTI_QUERY_PROMPT + "\n\n{format_instructions}"),
+                ("human", "<query>\n{query}\n</query>"),
+            ]
+        )
+        llm = ChatOpenAI(
+            model=settings.openai_mini_model,
+            temperature=0.0,
+            openai_api_key=settings.openai_api_key,
+        )
+        result: QueryVariants = (prompt | llm | parser).invoke(
+            {
+                "query": query,
+                "count": count,
+                "format_instructions": parser.get_format_instructions(),
+            }
+        )
+        variants = [v.strip() for v in result.variants if v.strip()][:count]
+        logger.info("Multi-query expansion produced %d variant(s).", len(variants))
+        return variants
+    except Exception as exc:  # noqa: BLE001 - degrade to single-query retrieval
+        logger.warning("Multi-query expansion failed (%s); using original only.", exc)
+        return []
+
+
+def _rrf_merge_chunk_lists(
+    ranked_lists: list[list[dict]], k: int, weights: list[float] | None = None
+) -> list[dict]:
+    """
+    Weighted RRF across per-variant chunk rankings, keyed on (source, content).
+
+    The original query gets full weight and rewrites get half. Unweighted
+    fusion let the rewrites outvote the original: measured on the golden
+    queries it cut harmful credit content for deficit customers by 92%, but it
+    also diluted credit_card.md out of the top-k for a Medium-band customer —
+    where a credit card is the *correct* recommendation — and the grounding
+    check caught the recommendation's document missing from retrieval.
+    Anchoring on the original keeps the diversity benefit without letting the
+    rewrites override what the actual query matches.
+    """
+    if weights is None:
+        weights = [1.0] * len(ranked_lists)
+
+    scores: dict[tuple, float] = {}
+    first_seen: dict[tuple, dict] = {}
+    for ranked, weight in zip(ranked_lists, weights):
+        for position, chunk in enumerate(ranked):
+            key = (chunk["source"], chunk["content"])
+            scores[key] = scores.get(key, 0.0) + weight / (60 + position + 1)
+            first_seen.setdefault(key, chunk)
+    ordered = sorted(scores, key=scores.get, reverse=True)
+    return [first_seen[key] for key in ordered[:k]]
+
+
+def retrieve(
+    query: str,
+    vector_store: Chroma,
+    use_reranker: bool = True,
+    use_multi_query: bool | None = None,
+) -> list[dict]:
+    """
+    Retrieve product context: hybrid fusion over a wide candidate pool, then rerank.
+
+    Both retrievers are asked for retrieval_candidate_k results rather than the
+    final retrieval_k. Fusion is used to assemble candidates, not to choose the
+    final passages.
+
+    Args:
+        query: Natural language summary of the customer's financial position.
+        vector_store: The Chroma collection holding product embeddings.
+        use_reranker: Set False to get the raw fusion ordering. Used by the
+                      retrieval evaluation to measure the reranker's effect.
+        use_multi_query: Expand the query into facet rewrites and fuse their
+                         result lists. None defers to settings.multi_query_enabled;
+                         the A/B evaluation passes explicit True/False.
+
+    Returns:
+        Up to retrieval_k chunks as {"content": ..., "source": ...}.
+    """
+    candidate_k = max(settings.retrieval_candidate_k, settings.retrieval_k)
+
+    multi = settings.multi_query_enabled if use_multi_query is None else use_multi_query
+    queries = [query]
+    if multi:
+        queries += _generate_query_variants(query, settings.multi_query_count)
+
+    if len(queries) > 1:
+        per_query = [_fused_candidates(q, vector_store, candidate_k) for q in queries]
+        anchor_weights = [1.0] + [0.5] * (len(per_query) - 1)
+        candidates = _rrf_merge_chunk_lists(per_query, candidate_k, anchor_weights)
+    else:
+        candidates = _fused_candidates(query, vector_store, candidate_k)
 
     if use_reranker:
         retrieved = rerank(query, candidates, top_k=settings.retrieval_k)
