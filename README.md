@@ -51,7 +51,8 @@ CSV / PDF Upload
 [categorizer.py]   Stage 1 keyword rules → Stage 2 batched gpt-4o-mini fallback
     │
     ▼
-[analyzer.py]      Income, expenses, savings rate, expense ratio, top categories
+[analyzer.py]      Income, expenses, savings rate, expense ratio, top categories,
+    │              essential vs discretionary split, risk band, health score
     │              (internal Savings transfers excluded from expenses)
     │              Risk band + health score computed here, deterministically
     ▼
@@ -277,7 +278,7 @@ The schema is split in two, and the split is the point:
 |---|---|
 | `financial_persona` | Short archetype label |
 | `income_stability_analysis` | Income source and liquidity commentary |
-| `spending_pattern_breakdown` | Essential vs discretionary split |
+| `spending_pattern_breakdown` | Narrative over the essential / discretionary / unclassified totals computed in `analyzer.py` — the model quotes the figures, it does not invent the split |
 | `credit_risk_assessment` | Justification of the *assigned* rating |
 | `primary_product` + `primary_reason` | Lead recommendation |
 | `secondary_product` + `secondary_reason` | Cross-sell recommendation |
@@ -335,9 +336,18 @@ in `evals/dataset.py`; that duplication is deliberate.
 **Layer 2 — grounded.** Requires an API key, runs over a sampled subset.
 Checks that recommended products exist, that the credit guardrail held, that
 the recommended product's document was actually retrieved, and that quoted
-percentages trace back to real metrics. An LLM judge on `gpt-4o-mini` — not the
-model under test, to avoid self-preference bias — scores groundedness and
-returns verbatim quotes of unsupported claims rather than a score out of ten.
+percentages trace back to real metrics.
+
+Groundedness is scored by a **panel of three LLM jurors** on `gpt-4o-mini` —
+not the model under test, to avoid self-preference bias. Each juror scores
+every narrative field separately, and a field is condemned only when a
+majority agrees, with verbatim quotes of the unsupported claims. A single
+judge was measured producing confident false positives that were not
+reproducible (condemning a verbatim "88%" while stating the ratio was 88%);
+a majority filters exactly that class of error, because a false positive has
+to be invented independently twice to survive. The groundedness verdict is
+**advisory** — it is printed for a human to read but does not fail the build —
+while the narrower `judge_respects_assigned_risk` check remains blocking.
 
 ```bash
 python -m evals.run_evals                   # free
