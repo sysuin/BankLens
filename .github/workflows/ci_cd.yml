@@ -164,6 +164,7 @@ jobs:
               --restart unless-stopped \
               -p 8501:8501 \
               -e OPENAI_API_KEY=$OPENAI_API_KEY \
+              -e VISION_OCR_ENABLED=true \
               -v /home/ec2-user/chroma_db:/app/chroma_db \
               $ECR_REPOSITORY:latest
 
