@@ -6,6 +6,8 @@ from the .env file. A single 'settings' instance is imported and shared
 across the entire application — no config values are hardcoded anywhere.
 """
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -102,6 +104,50 @@ class Settings(BaseSettings):
     # so this passes them whole while bounding cost if chunk_size is raised.
     rerank_passage_chars: int = 600
 
+    # ── Multi-Query Retrieval ────────────────────────────────────────────────
+    # Expands the retrieval query into facet-specific rewrites (savings vs
+    # credit vs liquidity) and RRF-fuses their result lists.
+    #
+    # Defaults ON by the same evidence standard that keeps the reranker OFF.
+    # Fusion is *anchored*: the original query gets full RRF weight, rewrites
+    # get half. The first, unweighted attempt cut harmful credit content for
+    # deficit customers by 92% — but the grounded eval layer then caught the
+    # same dilution removing credit_card.md for a Medium-band customer whose
+    # correct recommendation it was. Anchoring keeps diversity subordinate to
+    # what the actual query matches.
+    #
+    # A/B over the 65 golden queries (`--multi-query-ab`, top-4, no reranker),
+    # anchored fusion — nothing regresses:
+    #
+    #   hit      1.000 -> 1.000   unchanged
+    #   mrr      0.785 -> 0.838   first relevant document ranks higher
+    #   ndcg     0.626 -> 0.635   slightly better
+    #   prec     0.419 -> 0.419   unchanged
+    #   harmful  0.400 -> 0.354   modestly less credit content for deficit
+    #                             customers
+    #
+    # And retrieval_supports_recommendation holds 6/6 in the grounded layer.
+    # Cost per analysis: one mini-model rewrite call + two extra hybrid
+    # retrievals (~1s). Re-run BOTH the A/B and `--with-llm` after changing
+    # the rewrite prompt or the fusion weights.
+    multi_query_enabled: bool = True
+    multi_query_count: int = 2
+
+    # ── Profile Response Cache ───────────────────────────────────────────────
+    # Exact-key cache over (metrics, retrieved chunks, system prompt, model).
+    # Correctness note: this is deliberately NOT semantic caching — similar
+    # statements are different customers. The key hashes the prompt file and
+    # model name, so edits invalidate automatically.
+    profile_cache_enabled: bool = True
+    profile_cache_dir: str = "./.profile_cache"
+
+    # ── Vision OCR (Engine 3) ────────────────────────────────────────────────
+    # Off by default: the sanitizer masks PII in *text* before it reaches an
+    # external model, but a rendered page image cannot be masked. Enabling
+    # this trades that guarantee for the ability to read scanned statements.
+    vision_ocr_enabled: bool = False
+    vision_ocr_max_pages: int = 4
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -114,3 +160,14 @@ class Settings(BaseSettings):
 # Import this instance in every module that needs config values.
 # Example: from app.core.config import settings
 settings = Settings()
+
+# LangChain reads tracing configuration from the process environment, not from
+# this Settings object. Exporting here is what actually turns tracing on when
+# .env asks for it; setdefault so a real environment variable still wins.
+if (
+    settings.langchain_tracing_v2.strip().lower() == "true"
+    and settings.langchain_api_key
+):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
+    os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
