@@ -23,9 +23,16 @@ Claude Desktop config entry:
 The OPENAI_API_KEY from .env is loaded by pydantic-settings as usual.
 """
 
+import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+
+# MCP hosts (Claude Desktop included) launch servers from an arbitrary working
+# directory, but the pipeline resolves .env — and therefore the API key —
+# relative to CWD. Anchor to the project root before any app import so the
+# server behaves identically however it is launched.
+os.chdir(Path(__file__).resolve().parent)
 
 mcp = FastMCP("banklens")
 
