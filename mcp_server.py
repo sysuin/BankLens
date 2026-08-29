@@ -114,4 +114,10 @@ def search_products(query: str) -> list[dict]:
 
 
 if __name__ == "__main__":
+    # Under stdio transport, stdout is the JSON-RPC wire. Pipeline logs must
+    # therefore go to stderr, where MCP clients (Claude Desktop included)
+    # collect them as server logs instead of choking on them as bad frames.
+    from app.core.logger import route_logs_to_stderr
+
+    route_logs_to_stderr()
     mcp.run(transport="stdio")
