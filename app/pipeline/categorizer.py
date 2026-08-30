@@ -10,7 +10,7 @@ using a 2-Stage Hybrid Approach:
 
 Supported categories:
     Income, Rent & Housing, Education, Food, Transport, Utilities,
-    Subscriptions, Health, Shopping, Savings, Others
+    Subscriptions, Health, Shopping, Savings, Debt Payments, Others
 """
 
 import json
@@ -40,6 +40,16 @@ KEYWORD_MAP: dict[str, list[str]] = {
         "fd auto transfer",
         "auto transfer to fd",
         "auto transfer",
+    ],
+    "Debt Payments": [
+        "emi",
+        "loan repayment",
+        "loan installment",
+        "loan instalment",
+        "credit card payment",
+        "credit card bill",
+        "credit card minimum",
+        "card repayment",
     ],
     "Income": [
         "salary",
@@ -201,6 +211,15 @@ KEYWORD_MAP: dict[str, list[str]] = {
 }
 
 
+# Categories that can only describe money coming IN. Applying one to a debit is
+# a category error, not a judgement call — and the stage-2 LLM made exactly
+# that error in production, labelling "Personal Loan EMI Debit" as Income
+# because the word "Loan" reads like an inflow. The rules layer now catches
+# loan servicing directly, and this set is the backstop for the next
+# description nobody thought of.
+CREDIT_ONLY_CATEGORIES: frozenset[str] = frozenset({"Income"})
+
+
 def categorize(description: str) -> str:
     """Assign a spending category to a single transaction description via rule matching."""
     normalized = str(description).lower().strip()
@@ -269,6 +288,18 @@ def categorize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         result.loc[others_mask, "category"] = result.loc[
             others_mask, "description"
         ].map(lambda d: llm_mapped.get(d, "Others"))
+
+    # Stage 3: reject impossible (type, category) pairs. Cheap, deterministic,
+    # and it fixes a whole class of stage-2 mistakes rather than one wording.
+    is_debit = result["type"].astype(str).str.strip().str.lower() == "debit"
+    impossible = is_debit & result["category"].isin(CREDIT_ONLY_CATEGORIES)
+    if impossible.any():
+        logger.warning(
+            "Corrected %d debit(s) classified into a credit-only category: %s",
+            int(impossible.sum()),
+            sorted(result.loc[impossible, "description"].unique())[:5],
+        )
+        result.loc[impossible, "category"] = "Others"
 
     logger.info("Categorized %d transactions (2-stage hybrid).", len(result))
     return result
