@@ -118,7 +118,18 @@ def compute_health_score(savings_rate_pct: float) -> int:
 # the same invention this exists to remove. It is reported as unclassified.
 
 ESSENTIAL_CATEGORIES: frozenset[str] = frozenset(
-    {"Rent & Housing", "Food", "Utilities", "Transport", "Health", "Education"}
+    {
+        "Rent & Housing",
+        "Food",
+        "Utilities",
+        "Transport",
+        "Health",
+        "Education",
+        # Servicing existing debt is a fixed obligation, not a lifestyle
+        # choice — and counting it as discretionary would understate exactly
+        # the commitment that matters when judging capacity for more credit.
+        "Debt Payments",
+    }
 )
 DISCRETIONARY_CATEGORIES: frozenset[str] = frozenset({"Shopping", "Subscriptions"})
 

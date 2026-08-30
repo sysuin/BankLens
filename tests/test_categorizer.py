@@ -111,3 +111,72 @@ class TestCategorizeDataframe:
         """The number of rows should remain the same after categorization."""
         result = categorize_dataframe(sample_df)
         assert len(result) == len(sample_df)
+
+
+class TestDebtPayments:
+    """
+    Loan servicing must be recognised by the rules layer.
+
+    Production regression: "Personal Loan EMI Debit" reached the stage-2 LLM
+    (no rule matched) and came back as "Income" — the word "Loan" reads like
+    an inflow — so a debt repayment was counted as money coming in.
+    """
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Personal Loan EMI Debit",
+            "Home Loan EMI",
+            "HDFC Loan Repayment",
+            "Credit Card Minimum Payment",
+            "Credit Card Bill Auto Debit",
+            "Loan Installment Auto Pay",
+        ],
+    )
+    def test_loan_servicing_is_categorized_by_rules(self, description):
+        assert categorize(description) == "Debt Payments"
+
+    def test_loan_disbursement_is_not_debt_payment(self):
+        """An incoming loan is not a repayment; rules must not overreach."""
+        assert categorize("Loan Disbursement Credit") != "Debt Payments"
+
+    def test_debt_payments_is_classified_as_essential(self):
+        """Servicing debt is a fixed obligation, so it counts as essential."""
+        from app.pipeline.analyzer import (
+            DISCRETIONARY_CATEGORIES,
+            ESSENTIAL_CATEGORIES,
+        )
+
+        assert "Debt Payments" in ESSENTIAL_CATEGORIES
+        assert "Debt Payments" not in DISCRETIONARY_CATEGORIES
+
+
+class TestCreditOnlyGuard:
+    """A debit can never be Income, whatever stage 2 decides."""
+
+    def test_debit_labelled_income_by_llm_is_corrected(self, monkeypatch):
+        import pandas as pd
+
+        from app.core.config import settings
+        from app.pipeline import categorizer as categorizer_module
+
+        # Force stage 2 to run and to return the exact mistake seen in prod.
+        monkeypatch.setattr(settings, "openai_api_key", "test-key")
+        monkeypatch.setattr(
+            categorizer_module,
+            "batch_llm_categorize_others",
+            lambda descs: {d: "Income" for d in descs},
+        )
+
+        df = pd.DataFrame(
+            [
+                ("2024-01-05", "Mystery Outflow XYZ", 14500.0, "Debit"),
+                ("2024-01-06", "Mystery Inflow XYZ", 50000.0, "Credit"),
+            ],
+            columns=["date", "description", "amount", "type"],
+        )
+        out = categorizer_module.categorize_dataframe(df)
+
+        # The debit is rescued; the credit is legitimately left as Income.
+        assert out.loc[0, "category"] == "Others"
+        assert out.loc[1, "category"] == "Income"
