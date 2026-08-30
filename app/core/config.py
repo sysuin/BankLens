@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # names were recognised.
     langsmith_api_key: str = ""
 
+    # LangSmith is regional and a key is only valid in the region it was
+    # created in — a key from another region authenticates as 403, which reads
+    # like a bad credential and is not. Default is the US data plane; set
+    # LANGSMITH_ENDPOINT to https://eu.api.smith.langchain.com or
+    # https://apac.api.smith.langchain.com to match where the key was issued.
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
     # ── ChromaDB ──────────────────────────────────────────────────────────────
     # Local directory where ChromaDB persists its index between runs
     chroma_persist_dir: str = "./chroma_db"
@@ -180,3 +187,5 @@ if _tracing_wanted and _tracing_key:
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
     os.environ.setdefault("LANGCHAIN_API_KEY", _tracing_key)
     os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
+    os.environ.setdefault("LANGSMITH_ENDPOINT", settings.langsmith_endpoint)
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", settings.langsmith_endpoint)
