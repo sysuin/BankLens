@@ -307,8 +307,25 @@ def main() -> None:
             else:
                 raw_df = load_and_validate_csv(uploaded_file)
         else:
-            st.info(
-                "👈 Please select a Statement or upload a CSV/PDF from the left sidebar."
+            st.markdown(
+                textwrap.dedent("""
+                <div class='bl-empty'>
+                    <div class='bl-empty-mark'>&#8592;</div>
+                    <h3 class='bl-empty-title'>Pick a statement to begin</h3>
+                    <p class='bl-empty-sub'>
+                        Choose one of the three demo statements in the sidebar,
+                        or upload your own CSV or PDF. Everything below runs on
+                        the statement you select.
+                    </p>
+                    <div class='bl-empty-steps'>
+                        <div class='bl-step'><b>1</b> Parse &amp; mask PII</div>
+                        <div class='bl-step'><b>2</b> Categorise &amp; score</div>
+                        <div class='bl-step'><b>3</b> Retrieve products</div>
+                        <div class='bl-step'><b>4</b> Draft the RM pitch</div>
+                    </div>
+                </div>
+                """),
+                unsafe_allow_html=True,
             )
             return
     except Exception as e:
@@ -328,6 +345,9 @@ def main() -> None:
         return
 
     # ── Custom Styled Tab Navigation Bar ─────────────────────────────────────
+    # The wrapper div lets CSS style the whole row as one segmented control
+    # rather than four loose buttons (see .bl-navwrap in components.py).
+    st.markdown("<div class='bl-navwrap'>", unsafe_allow_html=True)
     col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
 
     with col_nav1:

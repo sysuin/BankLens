@@ -96,6 +96,17 @@ LIGHT_TOKENS: dict[str, str] = {
     "--bl-sb-surface": "#1e293b",
     "--bl-sb-border": "#334155",
     "--bl-sb-accent": "#38bdf8",
+    # ── Depth & motion ────────────────────────────────────────────────────
+    "--bl-elev-1": "0 1px 2px rgba(15,23,42,.04), 0 2px 8px rgba(15,23,42,.06)",
+    "--bl-elev-2": "0 2px 4px rgba(15,23,42,.05), 0 12px 28px rgba(15,23,42,.10)",
+    "--bl-hairline": "rgba(15,23,42,.06)",
+    "--bl-hover-border": "#94a3b8",
+    "--bl-grad-from": "#1e3a8a",
+    "--bl-grad-to": "#0284c7",
+    "--bl-ring-track": "#e2e8f0",
+    "--bl-tint": "rgba(37,99,235,.05)",
+    "--bl-track": "#f1f5f9",
+    "--bl-track-active": "#ffffff",
 }
 
 DARK_TOKENS: dict[str, str] = {
@@ -137,6 +148,20 @@ DARK_TOKENS: dict[str, str] = {
     "--bl-sb-surface": "#1f2a3d",
     "--bl-sb-border": "#2f3d52",
     "--bl-sb-accent": "#7dd3fc",
+    # ── Depth & motion ────────────────────────────────────────────────────
+    # Dark surfaces read as flat if you only darken them, so elevation here
+    # is a shadow *and* a light hairline on the top edge — the way a raised
+    # surface actually catches light.
+    "--bl-elev-1": "0 1px 2px rgba(0,0,0,.35), 0 2px 10px rgba(0,0,0,.30)",
+    "--bl-elev-2": "0 2px 6px rgba(0,0,0,.40), 0 16px 36px rgba(0,0,0,.45)",
+    "--bl-hairline": "rgba(255,255,255,.06)",
+    "--bl-hover-border": "#4a5c78",
+    "--bl-grad-from": "#7dd3fc",
+    "--bl-grad-to": "#a78bfa",
+    "--bl-ring-track": "#243044",
+    "--bl-tint": "rgba(96,165,250,.07)",
+    "--bl-track": "#101a2c",
+    "--bl-track-active": "#24334c",
 }
 
 
@@ -237,6 +262,134 @@ def inject_custom_css() -> None:
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
+        /* ── Typography rhythm ────────────────────────────────────────────
+           Streamlit ships generous default spacing that reads as "form",
+           not "product". Tightening the vertical rhythm and setting a real
+           type scale is most of the difference between a demo and an app. */
+        .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+            letter-spacing: -0.018em;
+            font-weight: 700;
+        }
+        .stApp h3 { font-size: 1.22rem !important; margin-top: 0.4rem !important; }
+        .stApp h4 { font-size: 1.02rem !important; }
+        [data-testid="stMain"] .block-container {
+            padding-top: 2.2rem !important;
+            max-width: 1180px;
+        }
+        [data-testid="stMain"] hr {
+            border-color: var(--bl-hairline) !important;
+            margin: 1.35rem 0 !important;
+        }
+
+        /* ── Segmented tab bar ────────────────────────────────────────────
+           The four nav buttons were four separate rectangles. Grouping them
+           into one control with a single active pill is what makes a tab bar
+           read as navigation instead of as a toolbar. */
+        /* The marker div cannot *contain* the button row — Streamlit closes
+           it — so it flags its own container and we style the row that
+           follows it. Sibling + :has() beats hashed emotion class names,
+           which change between Streamlit builds. */
+        .bl-navwrap { display: none; }
+        .bl-nav-row {
+            background: var(--bl-surface-2);
+            border: 1px solid var(--bl-border);
+            border-radius: 14px;
+            padding: 5px;
+            gap: 4px !important;
+            box-shadow: inset 0 1px 2px var(--bl-hairline);
+        }
+        .bl-nav-row [data-testid="stColumn"] { padding: 0 !important; }
+        .bl-nav-row .stButton > button {
+            border: 1px solid transparent !important;
+            background: transparent !important;
+            color: var(--bl-text-muted) !important;
+            box-shadow: none !important;
+            border-radius: 10px !important;
+            padding: 0.5rem 0.4rem !important;
+            font-size: 0.92rem !important;
+        }
+        .bl-nav-row .stButton > button:hover {
+            background: var(--bl-surface-3) !important;
+            color: var(--bl-text) !important;
+        }
+        .bl-nav-row [data-testid="stBaseButton-primary"] {
+            background: var(--bl-surface) !important;
+            color: var(--bl-text) !important;
+            border-color: var(--bl-border) !important;
+            box-shadow: var(--bl-elev-1) !important;
+        }
+
+        /* Bind the styles above to the row that follows the marker. */
+        [data-testid="stElementContainer"]:has(.bl-navwrap)
+            + [data-testid="stLayoutWrapper"] {
+            background: var(--bl-track);
+            border: 1px solid var(--bl-border);
+            border-radius: 14px;
+            padding: 5px;
+            margin: 0.2rem 0 0.35rem 0;
+            box-shadow: inset 0 1px 2px var(--bl-hairline);
+        }
+        [data-testid="stElementContainer"]:has(.bl-navwrap)
+            + [data-testid="stLayoutWrapper"] [data-testid="stColumn"] {
+            padding: 0 !important;
+        }
+        [data-testid="stElementContainer"]:has(.bl-navwrap)
+            + [data-testid="stLayoutWrapper"] .stButton > button {
+            border: 1px solid transparent !important;
+            background: transparent !important;
+            color: var(--bl-text-muted) !important;
+            box-shadow: none !important;
+            border-radius: 10px !important;
+            padding: 0.52rem 0.4rem !important;
+            font-size: 0.92rem !important;
+        }
+        [data-testid="stElementContainer"]:has(.bl-navwrap)
+            + [data-testid="stLayoutWrapper"] .stButton > button:hover {
+            background: var(--bl-surface-3) !important;
+            color: var(--bl-text) !important;
+            transform: none !important;
+        }
+        [data-testid="stElementContainer"]:has(.bl-navwrap)
+            + [data-testid="stLayoutWrapper"]
+            [data-testid="stBaseButton-primary"] {
+            background: var(--bl-track-active) !important;
+            color: var(--bl-text) !important;
+            border-color: var(--bl-border-strong) !important;
+            box-shadow: var(--bl-elev-1) !important;
+            font-weight: 700 !important;
+        }
+
+        /* ── Buttons ──────────────────────────────────────────────────────*/
+        .stButton > button {
+            border-radius: 11px !important;
+            font-weight: 600 !important;
+            transition: transform .16s ease, box-shadow .16s ease,
+                        background-color .16s ease, border-color .16s ease !important;
+        }
+        [data-testid="stMain"] [data-testid="stBaseButton-primary"] {
+            box-shadow: var(--bl-elev-1) !important;
+        }
+        [data-testid="stMain"] [data-testid="stBaseButton-primary"]:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--bl-elev-2) !important;
+        }
+        .stButton > button:active { transform: translateY(0) !important; }
+
+        /* ── Cards ────────────────────────────────────────────────────────*/
+        .bl-card {
+            background: var(--bl-surface);
+            border: 1px solid var(--bl-border);
+            border-radius: 16px;
+            box-shadow: var(--bl-elev-1);
+            transition: transform .18s ease, box-shadow .18s ease,
+                        border-color .18s ease;
+        }
+        .bl-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--bl-elev-2);
+            border-color: var(--bl-hover-border);
+        }
+
         /* Metric card styling */
         [data-testid="stMetricValue"] {
             font-size: 1.8rem !important;
@@ -250,16 +403,6 @@ def inject_custom_css() -> None:
             color: var(--bl-text-muted) !important;
             text-transform: uppercase;
             letter-spacing: 0.05em;
-        }
-
-        /* Glass card container */
-        .glass-card {
-            background: linear-gradient(135deg, var(--bl-card-grad-a) 0%, var(--bl-card-grad-b) 100%);
-            border: 1px solid var(--bl-border);
-            border-radius: 16px;
-            padding: 1.25rem 1.5rem;
-            box-shadow: 0 4px 20px -2px var(--bl-shadow);
-            margin-bottom: 1.25rem;
         }
 
         /* Sidebar compact spacing. Sidebar colours come from
@@ -341,6 +484,238 @@ def inject_custom_css() -> None:
             font-weight: 600;
         }
 
+        /* ── Dataframe & expander polish ──────────────────────────────────*/
+        [data-testid="stDataFrame"] {
+            border: 1px solid var(--bl-border) !important;
+            border-radius: 14px !important;
+            overflow: hidden !important;
+            box-shadow: var(--bl-elev-1);
+        }
+        [data-testid="stExpander"] details {
+            border: 1px solid var(--bl-border) !important;
+            border-radius: 14px !important;
+            background: var(--bl-surface) !important;
+            box-shadow: var(--bl-elev-1);
+        }
+        [data-testid="stChatInput"] textarea { border-radius: 12px !important; }
+
+        /* Scrollbars — default OS bars are the last thing that reads
+           "unstyled web page" on an otherwise finished surface. */
+        [data-testid="stMain"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+        [data-testid="stMain"] ::-webkit-scrollbar-track { background: transparent; }
+        [data-testid="stMain"] ::-webkit-scrollbar-thumb {
+            background: var(--bl-border-strong);
+            border-radius: 8px;
+            border: 2px solid transparent;
+            background-clip: content-box;
+        }
+        [data-testid="stMain"] ::-webkit-scrollbar-thumb:hover {
+            background: var(--bl-text-subtle);
+            background-clip: content-box;
+        }
+
+        /* Respect reduced-motion: every transform above is decorative. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                transition: none !important;
+                animation: none !important;
+            }
+            .bl-card:hover,
+            [data-testid="stMain"] [data-testid="stBaseButton-primary"]:hover {
+                transform: none !important;
+            }
+        }
+
+        /* ── Hero ─────────────────────────────────────────────────────────*/
+        .bl-hero { text-align: center; padding: 0.2rem 0 1.6rem 0; }
+        .bl-status {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: var(--bl-info-bg); color: var(--bl-accent-text);
+            padding: 5px 14px; border-radius: 999px;
+            font-size: 0.8rem; font-weight: 600; letter-spacing: .01em;
+            border: 1px solid var(--bl-border);
+        }
+        .bl-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 0 0 currentColor;
+            animation: bl-pulse 2.4s ease-out infinite;
+        }
+        @keyframes bl-pulse {
+            0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+            70%  { box-shadow: 0 0 0 7px transparent; opacity: .85; }
+            100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+        }
+        .bl-wordmark {
+            margin: 0.85rem 0 0 0 !important;
+            font-size: clamp(2.4rem, 5vw, 3.4rem) !important;
+            font-weight: 800 !important;
+            letter-spacing: -0.035em !important;
+            line-height: 1.05 !important;
+            /* Solid colour first: if background-clip:text is unsupported,
+               the wordmark stays readable instead of turning invisible. The
+               gradient is applied only where the clip actually works. */
+            color: var(--bl-grad-from) !important;
+        }
+        @supports (background-clip: text) or (-webkit-background-clip: text) {
+            .bl-wordmark {
+                background: linear-gradient(100deg,
+                    var(--bl-grad-from), var(--bl-grad-to));
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent !important;
+            }
+        }
+        .bl-subtitle {
+            color: var(--bl-text-subtle);
+            font-size: 1.02rem; line-height: 1.6;
+            margin: 0.7rem auto 0 auto; max-width: 640px;
+        }
+
+        /* ── KPI tiles ────────────────────────────────────────────────────*/
+        .bl-metric-grid {
+            display: grid; gap: 0.9rem; margin: 0.2rem 0 1.1rem 0;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        .bl-metric {
+            position: relative; overflow: hidden;
+            background: var(--bl-surface);
+            border: 1px solid var(--bl-border);
+            border-radius: 16px;
+            padding: 1rem 1.05rem 0.95rem 1.15rem;
+            box-shadow: var(--bl-elev-1);
+            transition: transform .18s ease, box-shadow .18s ease,
+                        border-color .18s ease;
+        }
+        .bl-metric::before {
+            content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+            width: 3px; background: var(--bl-border-strong);
+        }
+        .bl-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--bl-elev-2);
+            border-color: var(--bl-hover-border);
+        }
+        .bl-tone-good::before { background: var(--bl-success-text); }
+        .bl-tone-warn::before { background: var(--bl-warning-text); }
+        .bl-tone-bad::before  { background: var(--bl-score-bad); }
+        .bl-metric-top {
+            display: flex; align-items: center; gap: 7px; margin-bottom: .45rem;
+        }
+        .bl-metric-icon {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 20px; height: 20px; border-radius: 6px;
+            background: var(--bl-tint); color: var(--bl-accent-text);
+            font-size: .72rem; font-weight: 700;
+        }
+        .bl-metric-label {
+            font-size: .74rem; font-weight: 700; letter-spacing: .07em;
+            text-transform: uppercase; color: var(--bl-text-muted);
+        }
+        .bl-metric-value {
+            font-size: 1.72rem; font-weight: 800; line-height: 1.15;
+            letter-spacing: -0.02em; color: var(--bl-text);
+            font-variant-numeric: tabular-nums;
+        }
+        .bl-metric-note {
+            margin-top: .3rem; font-size: .8rem; color: var(--bl-text-subtle);
+        }
+
+        /* ── Score gauge ──────────────────────────────────────────────────*/
+        .bl-gauge-num {
+            font-size: 1.34rem; font-weight: 800;
+            fill: var(--bl-text); font-variant-numeric: tabular-nums;
+        }
+        .bl-gauge-cap {
+            font-size: .52rem; font-weight: 700; letter-spacing: .1em;
+            fill: var(--bl-text-subtle); text-transform: uppercase;
+        }
+
+        /* ── Profile card ─────────────────────────────────────────────────*/
+        .bl-profile { padding: 1.35rem 1.5rem 1.45rem 1.5rem; margin-bottom: 1.2rem; }
+        .bl-profile-head {
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 1.1rem;
+            border-bottom: 1px solid var(--bl-border);
+            padding-bottom: 1.05rem; margin-bottom: 1.15rem;
+        }
+        .bl-eyebrow {
+            font-size: .72rem; font-weight: 700; letter-spacing: .1em;
+            text-transform: uppercase; color: var(--bl-text-subtle);
+        }
+        .bl-persona-name {
+            margin: .3rem 0 0 0 !important;
+            font-size: 1.72rem !important; font-weight: 800 !important;
+            letter-spacing: -0.025em !important; color: var(--bl-text) !important;
+        }
+        .bl-profile-stats { display: flex; align-items: center; gap: 1.1rem; }
+        .bl-risk {
+            display: inline-flex; align-items: center; gap: 8px;
+            color: #ffffff; font-size: .82rem; font-weight: 700;
+            padding: 9px 17px; border-radius: 999px;
+            box-shadow: var(--bl-elev-1);
+        }
+        .bl-risk-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #ffffff; opacity: .9;
+        }
+        .bl-panels {
+            display: grid; gap: .85rem;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .bl-panel {
+            background: var(--bl-surface-2);
+            border: 1px solid var(--bl-border);
+            border-radius: 13px; padding: .95rem 1rem;
+        }
+        .bl-panel-head {
+            display: flex; align-items: center; gap: 7px;
+            font-weight: 700; font-size: .87rem; margin-bottom: .45rem;
+        }
+        .bl-panel-icon { font-size: .7rem; opacity: .85; }
+        .bl-panel-body {
+            color: var(--bl-body); font-size: .9rem; line-height: 1.58;
+            margin: 0;
+        }
+
+        /* ── Empty state ──────────────────────────────────────────────────*/
+        .bl-empty {
+            text-align: center; padding: 2.6rem 1.5rem 2.9rem 1.5rem;
+            background: var(--bl-surface-2);
+            border: 1px dashed var(--bl-border-strong);
+            border-radius: 18px; margin-top: .6rem;
+        }
+        .bl-empty-mark {
+            font-size: 1.5rem; color: var(--bl-accent-text);
+            width: 46px; height: 46px; line-height: 46px; margin: 0 auto .8rem auto;
+            border-radius: 50%; background: var(--bl-info-bg);
+        }
+        .bl-empty-title {
+            margin: 0 !important; color: var(--bl-text) !important;
+            font-size: 1.2rem !important;
+        }
+        .bl-empty-sub {
+            color: var(--bl-text-subtle); font-size: .94rem; line-height: 1.6;
+            max-width: 460px; margin: .5rem auto 1.4rem auto;
+        }
+        .bl-empty-steps {
+            display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center;
+        }
+        .bl-step {
+            background: var(--bl-surface); border: 1px solid var(--bl-border);
+            color: var(--bl-text-muted); border-radius: 999px;
+            padding: 6px 14px; font-size: .82rem; font-weight: 500;
+        }
+        .bl-step b {
+            color: var(--bl-accent-text); margin-right: 5px; font-weight: 800;
+        }
+
+        @media (max-width: 900px) {
+            .bl-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .bl-panels { grid-template-columns: 1fr; }
+            .bl-profile-head { flex-direction: column; align-items: flex-start; }
+        }
+
         /* Mobile Device Responsiveness */
         @media (max-width: 768px) {
             .grid-3col {
@@ -386,18 +761,19 @@ def inject_custom_css() -> None:
 
 
 def render_header() -> None:
-    """Render the main header banner with title and subtitle."""
+    """Render the hero banner: status pill, gradient wordmark, subtitle."""
     st.markdown(
         textwrap.dedent("""
-        <div style='text-align: center; padding: 0.5rem 0 1.2rem 0;'>
-            <div style='display: inline-flex; align-items: center; gap: 8px; background: var(--bl-info-bg); color: var(--bl-accent-text); padding: 4px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem;'>
-                ⚡ Enterprise AI Financial Intelligence Platform
+        <div class='bl-hero'>
+            <div class='bl-status'>
+                <span class='bl-dot'></span>
+                Enterprise AI Financial Intelligence Platform
             </div>
-            <h1 style='color: var(--bl-text); font-weight: 800; font-size: 2.6rem; margin: 0; letter-spacing: -0.02em;'>
-                🏦 BankLens
-            </h1>
-            <p style='color: var(--bl-text-subtle); font-size: 1.1rem; margin-top: 0.4rem; font-weight: 400;'>
-                Automated Financial Profiling, RAG Multi-Product Pitch Engine &amp; Default Guardrails
+            <h1 class='bl-wordmark'>BankLens</h1>
+            <p class='bl-subtitle'>
+                Automated financial profiling, hybrid-RAG product matching
+                and default guardrails &mdash; grounded in the statement,
+                not in the model.
             </p>
         </div>
         """),
@@ -405,28 +781,70 @@ def render_header() -> None:
     )
 
 
-def render_metric_cards(metrics: FinancialMetrics) -> None:
-    """Render 4 formatted metric cards in a single row."""
-    col1, col2, col3, col4 = st.columns(4)
+def _metric_card(icon: str, label: str, value: str, note: str, tone: str) -> str:
+    """One KPI tile. `tone` selects the accent rail: neutral | good | warn | bad."""
+    return (
+        f"<div class='bl-metric bl-tone-{tone}'>"
+        f"<div class='bl-metric-top'>"
+        f"<span class='bl-metric-icon'>{icon}</span>"
+        f"<span class='bl-metric-label'>{label}</span>"
+        f"</div>"
+        f"<div class='bl-metric-value'>{value}</div>"
+        f"<div class='bl-metric-note'>{note}</div>"
+        f"</div>"
+    )
 
-    col1.metric(
-        label="💰 Total Income",
-        value=f"₹{metrics.total_income:,.0f}",
+
+def render_metric_cards(metrics: FinancialMetrics) -> None:
+    """
+    Render the four headline KPIs.
+
+    Hand-built rather than st.metric: the tiles carry an accent rail whose
+    colour encodes the reading (healthy / stretched / deficit), which a
+    generic metric widget cannot express — and the colour is derived from the
+    computed figures, never chosen by the model.
+    """
+    savings_tone = (
+        "bad"
+        if metrics.is_cashflow_negative
+        else ("good" if metrics.savings_rate_pct >= 30 else "warn")
     )
-    col2.metric(
-        label="💸 Total Expenses",
-        value=f"₹{metrics.total_expenses:,.0f}",
-    )
-    col3.metric(
-        label="🏦 Net Savings",
-        value=f"₹{metrics.savings_amount:,.0f}",
-        delta=f"{metrics.savings_rate_pct:.1f}% savings rate",
-        delta_color="normal" if metrics.savings_amount >= 0 else "inverse",
-    )
-    col4.metric(
-        label="📊 Expense Ratio",
-        value=f"{metrics.expense_to_income_ratio:.0%}",
-        help="Total Expenses ÷ Total Income. Below 70% is considered healthy.",
+    ratio = metrics.expense_to_income_ratio
+    ratio_tone = "good" if ratio < 0.7 else ("warn" if ratio <= 1.0 else "bad")
+
+    tiles = [
+        _metric_card(
+            "&#8593;",
+            "Total Income",
+            f"&#8377;{metrics.total_income:,.0f}",
+            f"{metrics.credit_count} credits",
+            "neutral",
+        ),
+        _metric_card(
+            "&#8595;",
+            "Total Expenses",
+            f"&#8377;{metrics.total_expenses:,.0f}",
+            f"{metrics.debit_count} debits",
+            "neutral",
+        ),
+        _metric_card(
+            "&#9679;",
+            "Net Savings",
+            f"&#8377;{metrics.savings_amount:,.0f}",
+            f"{metrics.savings_rate_pct:.1f}% savings rate",
+            savings_tone,
+        ),
+        _metric_card(
+            "&#8942;",
+            "Expense Ratio",
+            f"{ratio:.0%}",
+            "of income spent" + (" &mdash; in deficit" if ratio > 1 else ""),
+            ratio_tone,
+        ),
+    ]
+    st.markdown(
+        f"<div class='bl-metric-grid'>{''.join(tiles)}</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -449,8 +867,33 @@ def render_transaction_table(df: pd.DataFrame) -> None:
     )
 
 
+def _score_gauge(score: int, colour_token: str) -> str:
+    """
+    Radial gauge for the 0-100 health score.
+
+    A number in a box states the score; an arc *shows* it against its range,
+    which is the whole reason a gauge exists. Drawn as inline SVG so it
+    inherits the theme tokens instead of shipping an image per theme.
+    """
+    radius, circumference = 34, 2 * 3.14159 * 34
+    filled = circumference * max(0, min(100, score)) / 100
+    return (
+        f"<svg width='92' height='92' viewBox='0 0 92 92' role='img' "
+        f"aria-label='Financial health score {score} out of 100'>"
+        f"<circle cx='46' cy='46' r='{radius}' fill='none' "
+        f"stroke='var(--bl-ring-track)' stroke-width='8'/>"
+        f"<circle cx='46' cy='46' r='{radius}' fill='none' "
+        f"stroke='{colour_token}' stroke-width='8' stroke-linecap='round' "
+        f"stroke-dasharray='{filled:.1f} {circumference:.1f}' "
+        f"transform='rotate(-90 46 46)'/>"
+        f"<text x='46' y='45' text-anchor='middle' class='bl-gauge-num'>{score}</text>"
+        f"<text x='46' y='59' text-anchor='middle' class='bl-gauge-cap'>SCORE</text>"
+        f"</svg>"
+    )
+
+
 def render_profile_card(profile: CustomerProfile) -> None:
-    """Render the AI customer persona, health score & risk profile summary card."""
+    """Render the AI customer persona, health-score gauge and risk badge."""
     risk_colour = RISK_COLOURS.get(profile.risk_profile, "#64748b")
     score = profile.financial_health_score
     score_token = (
@@ -459,45 +902,50 @@ def render_profile_card(profile: CustomerProfile) -> None:
         else ("var(--bl-score-mid)" if score >= 50 else "var(--bl-score-bad)")
     )
 
+    panels = [
+        (
+            "&#9650;",
+            "Income Stability",
+            "var(--bl-accent-text)",
+            profile.income_stability_analysis,
+        ),
+        (
+            "&#9632;",
+            "Spending Breakdown",
+            "var(--bl-success-text)",
+            profile.spending_pattern_breakdown,
+        ),
+        (
+            "&#9888;",
+            "Credit Risk Rationale",
+            "var(--bl-warning-text)",
+            profile.credit_risk_assessment,
+        ),
+    ]
+    panel_html = "".join(
+        f"<div class='bl-panel'>"
+        f"<div class='bl-panel-head' style='color:{colour};'>"
+        f"<span class='bl-panel-icon'>{icon}</span>{title}</div>"
+        f"<p class='bl-panel-body'>{body}</p></div>"
+        for icon, title, colour, body in panels
+    )
+
     card_html = f"""
-    <div class='glass-card'>
-        <div style='display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem; border-bottom: 1px solid var(--bl-border); padding-bottom: 1rem; margin-bottom: 1rem;'>
-            <div>
-                <span style='font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--bl-text-subtle); font-weight:700;'>Customer Archetype</span>
-                <h2 style='margin:0; color:var(--bl-text); font-weight:800; font-size:1.7rem;'>
-                    👤 {profile.financial_persona}
-                </h2>
+    <div class='bl-profile bl-card'>
+        <div class='bl-profile-head'>
+            <div class='bl-persona'>
+                <span class='bl-eyebrow'>Customer Archetype</span>
+                <h2 class='bl-persona-name'>{profile.financial_persona}</h2>
             </div>
-            <div style='display:flex; gap:12px; align-items:center;'>
-                <div style='background:var(--bl-surface-3); border:1px solid var(--bl-border-strong); padding:6px 16px; border-radius:30px; text-align:center;'>
-                    <span style='font-size:0.75rem; color:var(--bl-text-subtle); font-weight:700; text-transform:uppercase;'>Health Score</span>
-                    <div style='font-size:1.2rem; font-weight:800; color:{score_token};'>{score}/100</div>
-                </div>
-                <div style='background:{risk_colour}; color:#ffffff; font-size:0.85rem; font-weight:700; padding:10px 18px; border-radius:30px; box-shadow: 0 2px 10px var(--bl-shadow);'>
-                    🛡️ {profile.risk_profile} Risk Profile
+            <div class='bl-profile-stats'>
+                {_score_gauge(score, score_token)}
+                <div class='bl-risk' style='background:{risk_colour};'>
+                    <span class='bl-risk-dot'></span>
+                    {profile.risk_profile} Risk
                 </div>
             </div>
         </div>
-        <div class='grid-3col' style='display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1rem; margin-top:1rem;'>
-            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
-                <span style='font-weight:700; color:var(--bl-accent-text); font-size:0.88rem;'>📈 Income Stability</span>
-                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
-                    {profile.income_stability_analysis}
-                </p>
-            </div>
-            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
-                <span style='font-weight:700; color:var(--bl-success-text); font-size:0.88rem;'>🛒 Spending Breakdown</span>
-                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
-                    {profile.spending_pattern_breakdown}
-                </p>
-            </div>
-            <div style='background:var(--bl-surface); padding:1rem; border-radius:12px; border:1px solid var(--bl-border);'>
-                <span style='font-weight:700; color:var(--bl-warning-text); font-size:0.88rem;'>⚠️ Credit Risk Rationale</span>
-                <p style='color:var(--bl-body); margin-top:0.4rem; margin-bottom:0; font-size:0.9rem; line-height:1.5;'>
-                    {profile.credit_risk_assessment}
-                </p>
-            </div>
-        </div>
+        <div class='bl-panels'>{panel_html}</div>
     </div>
     """
     st.markdown(textwrap.dedent(card_html), unsafe_allow_html=True)
