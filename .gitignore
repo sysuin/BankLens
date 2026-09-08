@@ -1,7 +1,9 @@
 # Environment variables, keys, and personal notes — never commit
 .env
 *.pem
-docs/
+docs/*
+!docs/discovery.md
+!docs/numbers_card.md
 .claude/
 *_summary.txt
 

@@ -1,0 +1,458 @@
+{
+ "summary": {
+  "n_runs": 10,
+  "n_errors": 2,
+  "vector_store_warm_s": 1.3037249159997373,
+  "total_s": {
+   "p50": 8.201927311998588,
+   "p95": 14.550254990999468,
+   "min": 7.151752875000966,
+   "max": 16.95381029100008
+  },
+  "usd_per_statement": {
+   "p50": 0.0097253,
+   "mean": 0.00976926,
+   "max": 0.01006175
+  },
+  "stage_p50_s": {
+   "parse": 0.0022979165000833746,
+   "sanitize": 0.0014973124998505227,
+   "categorize": 0.0018759165000119538,
+   "analyze": 0.00461431250005262,
+   "retrieve": 2.6352391454997814,
+   "profile": 5.235209562499676
+  },
+  "stage_share_of_cost": {
+   "parse": 0.0,
+   "sanitize": 0.0,
+   "categorize": 0.0004084239747944061,
+   "analyze": 0.0,
+   "retrieve": 0.010007922810939618,
+   "profile": 0.989583653214266
+  },
+  "tokens_p50": {
+   "categorize": {
+    "in": 0.0,
+    "out": 0.0
+   },
+   "retrieve": {
+    "in": 328.0,
+    "out": 79.0
+   },
+   "profile": {
+    "in": 2375.0,
+    "out": 379.0
+   }
+  },
+  "settings": {
+   "model": "gpt-4o",
+   "mini": "gpt-4o-mini",
+   "rerank_backend": "none",
+   "multi_query": true,
+   "retrieval_k": 4,
+   "candidate_k": 15
+  }
+ },
+ "runs": [
+  {
+   "file": "sample_1_high_saver.csv",
+   "stages": {
+    "parse": {
+     "s": 0.01880449999953271
+    },
+    "sanitize": {
+     "s": 0.004004624999652151
+    },
+    "categorize": {
+     "s": 0.020349583000097482,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.010911082999882638
+    },
+    "retrieve": {
+     "s": 12.266571666000345,
+     "in": 329,
+     "out": 79,
+     "usd": 9.675e-05
+    },
+    "profile": {
+     "s": 4.633168834000571,
+     "in": 2378,
+     "out": 367,
+     "usd": 0.009615
+    }
+   },
+   "rows": 120,
+   "llm_fallback_rows": 0,
+   "total_s": 16.95381029100008,
+   "total_usd": 0.00971175,
+   "risk": "Low",
+   "products": null,
+   "repeat": 0
+  },
+  {
+   "file": "sample_2_active_spender.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0036848330000793794
+    },
+    "sanitize": {
+     "s": 0.0024254579993794323
+    },
+    "categorize": {
+     "s": 0.0031454999998459243,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.005161666999811132
+    },
+    "retrieve": {
+     "s": 2.405193790999874,
+     "in": 329,
+     "out": 80,
+     "usd": 9.735e-05
+    },
+    "profile": {
+     "s": 5.699315374999969,
+     "in": 2307,
+     "out": 383,
+     "usd": 0.0095975
+    }
+   },
+   "rows": 156,
+   "llm_fallback_rows": 0,
+   "total_s": 8.11892662399896,
+   "total_usd": 0.00969485,
+   "risk": "Medium",
+   "products": null,
+   "repeat": 0
+  },
+  {
+   "file": "sample_3_cashflow_stressed.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0022126670000943705
+    },
+    "sanitize": {
+     "s": 0.0015075829996931134
+    },
+    "categorize": {
+     "s": 0.0018013340004472411,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.0037138750003578025
+    },
+    "retrieve": {
+     "s": 3.260146707999411,
+     "in": 328,
+     "out": 79,
+     "usd": 9.659999999999999e-05
+    },
+    "profile": {
+     "s": 7.48632224999983,
+     "in": 2375,
+     "out": 368,
+     "usd": 0.0096175
+    }
+   },
+   "rows": 108,
+   "llm_fallback_rows": 0,
+   "total_s": 10.755704416999833,
+   "total_usd": 0.0097141,
+   "risk": "High",
+   "products": null,
+   "repeat": 0
+  },
+  {
+   "file": "sample_3_cashflow_stressed.pdf",
+   "stages": {
+    "parse": {
+     "s": 0.20037704199967266
+    },
+    "sanitize": {
+     "s": 0.0007694580008319463
+    },
+    "categorize": {
+     "s": 0.0010050830005639,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.0026399580001452705
+    },
+    "retrieve": {
+     "s": 2.244123999999829,
+     "in": 328,
+     "out": 79,
+     "usd": 9.659999999999999e-05
+    },
+    "profile": {
+     "s": 5.956990458000291,
+     "in": 2375,
+     "out": 394,
+     "usd": 0.0098775
+    }
+   },
+   "rows": 108,
+   "llm_fallback_rows": 0,
+   "total_s": 8.405905999001334,
+   "total_usd": 0.009974100000000001,
+   "risk": "High",
+   "products": null,
+   "repeat": 0
+  },
+  {
+   "file": "sample_4_scanned_statement.pdf",
+   "repeat": 0,
+   "error": "ValueError: No transaction records found in the uploaded PDF statement. If this is a scanned statement, vision OCR can read it \u2014 set VISION_OCR_ENABLED=true (note: this sends page images to the vision API before PII masking can occur)."
+  },
+  {
+   "file": "sample_statement.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0017524169998068828
+    },
+    "sanitize": {
+     "s": 0.0006568749995494727
+    },
+    "categorize": {
+     "s": 1.054894749999221,
+     "in": 93,
+     "out": 10,
+     "usd": 1.995e-05
+    },
+    "analyze": {
+     "s": 0.011222457999792823
+    },
+    "retrieve": {
+     "s": 4.722640875000252,
+     "in": 325,
+     "out": 88,
+     "usd": 0.00010155
+    },
+    "profile": {
+     "s": 5.8214089160001095,
+     "in": 2294,
+     "out": 388,
+     "usd": 0.009615
+    }
+   },
+   "rows": 30,
+   "llm_fallback_rows": 1,
+   "total_s": 11.612576290998732,
+   "total_usd": 0.0097365,
+   "risk": "Low",
+   "products": null,
+   "repeat": 0
+  },
+  {
+   "file": "sample_1_high_saver.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0019934590000048047
+    },
+    "sanitize": {
+     "s": 0.0017531249995954568
+    },
+    "categorize": {
+     "s": 0.0014921249994586105,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.005519499999536492
+    },
+    "retrieve": {
+     "s": 2.737532291000207,
+     "in": 329,
+     "out": 79,
+     "usd": 9.675e-05
+    },
+    "profile": {
+     "s": 5.536637499999415,
+     "in": 2378,
+     "out": 402,
+     "usd": 0.009965
+    }
+   },
+   "rows": 120,
+   "llm_fallback_rows": 0,
+   "total_s": 8.284927999998217,
+   "total_usd": 0.01006175,
+   "risk": "Low",
+   "products": null,
+   "repeat": 1
+  },
+  {
+   "file": "sample_2_active_spender.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0011461250005595502
+    },
+    "sanitize": {
+     "s": 0.001487042000007932
+    },
+    "categorize": {
+     "s": 0.0018572500002846937,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.003651042000456073
+    },
+    "retrieve": {
+     "s": 2.642295374999776,
+     "in": 329,
+     "out": 80,
+     "usd": 9.735e-05
+    },
+    "profile": {
+     "s": 4.933781624999938,
+     "in": 2307,
+     "out": 367,
+     "usd": 0.0094375
+    }
+   },
+   "rows": 156,
+   "llm_fallback_rows": 0,
+   "total_s": 7.584218459001022,
+   "total_usd": 0.00953485,
+   "risk": "Medium",
+   "products": null,
+   "repeat": 1
+  },
+  {
+   "file": "sample_3_cashflow_stressed.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0023831660000723787
+    },
+    "sanitize": {
+     "s": 0.001721791999443667
+    },
+    "categorize": {
+     "s": 0.0018945829997392138,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.005301999999574036
+    },
+    "retrieve": {
+     "s": 2.4239205000003494,
+     "in": 328,
+     "out": 79,
+     "usd": 9.659999999999999e-05
+    },
+    "profile": {
+     "s": 4.773152417000347,
+     "in": 2375,
+     "out": 373,
+     "usd": 0.0096675
+    }
+   },
+   "rows": 108,
+   "llm_fallback_rows": 0,
+   "total_s": 7.2083744579995255,
+   "total_usd": 0.009764100000000001,
+   "risk": "High",
+   "products": null,
+   "repeat": 1
+  },
+  {
+   "file": "sample_3_cashflow_stressed.pdf",
+   "stages": {
+    "parse": {
+     "s": 0.29340124999998807
+    },
+    "sanitize": {
+     "s": 0.0007377080000878777
+    },
+    "categorize": {
+     "s": 0.000983957999778795,
+     "in": 0,
+     "out": 0,
+     "usd": 0.0
+    },
+    "analyze": {
+     "s": 0.002791792000607529
+    },
+    "retrieve": {
+     "s": 2.409896834000392,
+     "in": 328,
+     "out": 79,
+     "usd": 9.659999999999999e-05
+    },
+    "profile": {
+     "s": 4.443941333000112,
+     "in": 2375,
+     "out": 386,
+     "usd": 0.0097975
+    }
+   },
+   "rows": 108,
+   "llm_fallback_rows": 0,
+   "total_s": 7.151752875000966,
+   "total_usd": 0.009894100000000001,
+   "risk": "High",
+   "products": null,
+   "repeat": 1
+  },
+  {
+   "file": "sample_4_scanned_statement.pdf",
+   "repeat": 1,
+   "error": "ValueError: No transaction records found in the uploaded PDF statement. If this is a scanned statement, vision OCR can read it \u2014 set VISION_OCR_ENABLED=true (note: this sends page images to the vision API before PII masking can occur)."
+  },
+  {
+   "file": "sample_statement.csv",
+   "stages": {
+    "parse": {
+     "s": 0.0017225000001417357
+    },
+    "sanitize": {
+     "s": 0.0007807920001141611
+    },
+    "categorize": {
+     "s": 0.7402649169998767,
+     "in": 93,
+     "out": 10,
+     "usd": 1.995e-05
+    },
+    "analyze": {
+     "s": 0.0040669580002941075
+    },
+    "retrieve": {
+     "s": 2.628182915999787,
+     "in": 325,
+     "out": 88,
+     "usd": 0.00010155
+    },
+    "profile": {
+     "s": 4.681950166999741,
+     "in": 2294,
+     "out": 375,
+     "usd": 0.009485
+    }
+   },
+   "rows": 30,
+   "llm_fallback_rows": 1,
+   "total_s": 8.056968249999954,
+   "total_usd": 0.0096065,
+   "risk": "Low",
+   "products": null,
+   "repeat": 1
+  }
+ ]
+}
