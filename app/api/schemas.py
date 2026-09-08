@@ -52,6 +52,13 @@ class CustomerOut(BaseModel):
     statement_count: int = 0
 
 
+class CustomerDeleted(BaseModel):
+    customer_id: uuid.UUID
+    statements: int
+    runs: int
+    checkpoint_rows: int
+
+
 # ── Statements ───────────────────────────────────────────────────────────────
 
 

@@ -53,7 +53,7 @@ across demographic rewrites of every golden statement.
 
 The system prompt is hashed; every profile stores its hash and model, and
 `prompt_versions` records which versions ran against which models and how
-often. Current: `system_prompt` `5e372eacf2da`.
+often. Current: `system_prompt` `36d7cd7653ee` (Phase 8 made the product guidance bank-neutral; `5e372eacf2da` before that).
 
 ## Limitations and failure modes
 

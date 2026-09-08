@@ -41,6 +41,8 @@ services:
       DATABASE_ADMIN_URL: postgresql+asyncpg://banklens_owner:banklens_owner@postgres:5432/banklens
       DATABASE_CHAT_URL: postgresql+asyncpg://banklens_chat:banklens_chat@postgres:5432/banklens
       LOG_FORMAT: json
+      # The per-user limit is a counter row in Postgres, shared by every API replica.
+      RATE_LIMIT_BACKEND: postgres
       # Spans always land in the spans table; this also ships them to Jaeger.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     command: >

@@ -41,16 +41,16 @@ the evaluation gate enforce, and the reason the system can be trusted.
 ## Layout
 
 ```
-app/pipeline/    parse, sanitize, categorize, analyze, rag, reranker, agent, chat, cache
+app/pipeline/    parse, sanitize, categorize, analyze, rag, reranker, agent, chat, cache, policy
 app/graph/       LangGraph decision graph: nodes, builder (checkpointer), audit
-app/platform/    gateway (providers, breaker, budgets), tracing, pricing, guardrails, registry
-app/warehouse/   semantic_layer.yaml, semantic (loader/validator), query (runner), router (intent)
+app/platform/    gateway (providers, breaker, budgets), tracing, pricing, guardrails, registry, ratelimit
+app/warehouse/   semantic_layer.yaml, semantic (loader/validator), query (runner), router (intent), pilot
 app/api/         FastAPI: routes/, service, decisions, traces, deps (auth, rate limit), sse
 app/db/          models, session (RLS pinning), local (embedded Postgres), seed
 app/worker.py    bulk job worker (SKIP LOCKED, leases)
 app/main.py      Streamlit console (direct mode and API mode)
 evals/           golden set, run_evals, compare_providers, redteam/, bias_check, baseline/
-alembic/         migrations 0001–0006; every tenant table's RLS policy lives here
+alembic/         migrations 0001–0007; every tenant table's RLS policy lives here
 docs/            discovery, numbers_card, governance/ (tracked); the rest is a local library
 scripts/         prove_isolation, show_trace, load_test
 ```
@@ -61,7 +61,7 @@ scripts/         prove_isolation, show_trace, load_test
 make db migrate seed      # embedded Postgres (no Docker), schema, two synthetic banks
 make api                  # :8000    make ui   # :8501 console in API mode
 make test                 # boots a throwaway Postgres; ~75 s
-make evals [PROVIDER=ollama]   make compare   make redteam   make load   make trace
+make evals [PROVIDER=ollama] [TENANT=harbor]   make compare   make redteam   make load   make trace   make pilot
 ```
 
 Demo users: `rm@<tenant>.example`, `reviewer@<tenant>.example`, password
@@ -73,7 +73,8 @@ Demo users: `rm@<tenant>.example`, `reviewer@<tenant>.example`, password
   with `roles`, `triggers`, `params` and `sql` over the views only. The loader
   rejects anything the SQL guard rejects. Add a router test.
 - **A tenant:** a directory under `knowledge_base/<slug>/`, a row in
-  `app/db/seed.py`, and its forbidden-credit set in `app/graph/nodes.py`.
+  `app/db/seed.py`, and its forbidden-credit set in `app/pipeline/policy.py`
+  (the graph's guardrail node and the golden set both read it).
 - **A graph node:** an async function that writes an audit row, wrapped by
   `builder._traced`; nothing with a side effect before an `interrupt()`.
 - **A guardrail pattern:** add the family to `app/platform/guardrails.py`

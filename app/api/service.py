@@ -20,7 +20,7 @@ import uuid
 from decimal import Decimal
 
 import pandas as pd
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
@@ -29,6 +29,7 @@ from app.core.logger import get_logger
 from app.db.models import (
     Customer,
     Profile,
+    Run,
     SourceType,
     Statement,
     StatementMetrics,
@@ -466,3 +467,66 @@ async def create_customer(
             "declared_monthly_income": float(customer.declared_monthly_income),
             "statement_count": 0,
         }
+
+
+async def delete_customer(
+    tenant_id: uuid.UUID, customer_id: uuid.UUID, actor_email: str
+) -> dict:
+    """
+    The retention action: remove a customer and everything derived from them.
+
+    Statements, ledger lines, metrics, profiles, runs, decisions, audit rows,
+    spans and query-log rows go by foreign-key cascade inside a tenant-pinned
+    transaction, so the policy decides what is deletable. LangGraph's
+    checkpoints have no foreign key, so their rows are purged by run id
+    afterwards. The deletion itself is recorded as an audit event that
+    references no deleted row (counts only), so the trail still shows that
+    the deletion happened, by whom, and how much went.
+    """
+    from app.graph import audit
+    from app.graph.builder import purge_checkpoints
+
+    async with tenant_session(tenant_id) as session:
+        customer = await session.get(Customer, customer_id)
+        if customer is None:
+            raise NotFound("customer not found")
+        run_ids = list(
+            (
+                await session.execute(
+                    select(Run.id)
+                    .join(Statement, Statement.id == Run.statement_id)
+                    .where(Statement.customer_id == customer_id)
+                )
+            ).scalars()
+        )
+        statement_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(Statement)
+                .where(Statement.customer_id == customer_id)
+            )
+        ).scalar_one()
+        external_ref = customer.external_ref
+        # A bulk DELETE so the database cascades; the ORM would try to
+        # orphan the statements first and hit the NOT NULL on customer_id.
+        await session.execute(delete(Customer).where(Customer.id == customer_id))
+
+    checkpoint_rows = await purge_checkpoints(tenant_id, run_ids)
+    await audit.record(
+        tenant_id,
+        node="retention",
+        event="customer_deleted",
+        actor=actor_email,
+        payload={
+            "customer_ref": external_ref,
+            "statements": int(statement_count),
+            "runs": len(run_ids),
+            "checkpoint_rows": checkpoint_rows,
+        },
+    )
+    return {
+        "customer_id": customer_id,
+        "statements": int(statement_count),
+        "runs": len(run_ids),
+        "checkpoint_rows": checkpoint_rows,
+    }

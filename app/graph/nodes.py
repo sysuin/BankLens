@@ -47,14 +47,7 @@ logger = get_logger(__name__)
 
 INCOME_VERIFICATION = "income_verification"
 
-# Products that must not be pitched to a customer in cash-flow deficit,
-# per tenant catalogue. Anything unsecured that adds debt.
-CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT: dict[str, frozenset[str]] = {
-    "meridian": frozenset({"credit_card.md", "personal_loan.md"}),
-    "harbor": frozenset(
-        {"cashback_credit_card.md", "small_business_line.md", "auto_loan.md"}
-    ),
-}
+from app.pipeline.policy import CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT  # noqa: E402
 
 
 def months_in_period(period: str) -> int:

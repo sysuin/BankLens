@@ -4,7 +4,7 @@ The numbers I quote in an interview, with the command that produced each one. A 
 command is not a number, it is a claim. Baseline measured **2026-09-08** on `main` at commit `39a01d4`
 (branch `phase-0-baseline`), macOS, Python 3.11, `gpt-4o` + `gpt-4o-mini`, reranker off, multi-query on.
 
-| Number | Baseline (Phase 0) | After Phase 7 | Command / source |
+| Number | Baseline (Phase 0) | After Phase 8 | Command / source |
 | --- | --- | --- | --- |
 | Golden-set pass rate, deterministic layer | **65 / 65** (4 checks × 65 cases, 0 failures) | **65 / 65**, unchanged through every phase (runs in CI on every push) | `python -m evals.run_evals` |
 | Grounded layer, sampled | **6 cases**: credit_guardrail 6/6, products_are_real 6/6, retrieval_supports_recommendation 6/6, sources_present 6/6, percentages_supported 5/6 (advisory) | hosted **6/6 on all five checks** (advisory percentages 6/6 this pass); local qwen2.5:3b 6/6 on the four blocking checks, 0/6 advisory | `python -m evals.run_evals --with-llm` |
@@ -19,14 +19,16 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | cache hit skips the whole profile span; keyed by computed inputs, shared across processes, tenant-scoped | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | unchanged, per tenant | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | unchanged; stated in `docs/governance/DATA_RETENTION.md` | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **402 passed** in 21 files, ≈75 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **409 passed** in 22 files, ≈85 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | ≈19,400 lines across `app/`, `evals/`, `scripts/`, `tests/`, `mcp_server.py`; 18 knowledge-base documents in two tenants | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a | **100 % of 43 attacks blocked, 0 % false positives on 37 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
 | Bias check (demographic rewrites) | n/a | **65 statements × 5 groups: risk band and score identical in every case; guardrail flags equal** | `make bias` |
 | Bulk throughput and cost | n/a | **50 statements in 8.5 s worker time (356.7/min), p50 36 ms, p95 1.6 s, $0 (ingest only, concurrency 2)** | `make load` |
 | Tenant isolation test | n/a | **7 tests in `tests/test_tenancy.py` + `make prove-isolation` (RLS on → nothing; RLS off → row leaks; on → nothing)** | `make prove-isolation` |
-| Local-model golden pass rate | n/a | **4/4 blocking checks at 6/6; advisory 0/6; p50 34.9 s; $0** (Phase 4 table) | `make compare` |
+| Local-model golden pass rate | n/a | **4/4 blocking checks at 6/6; advisory 2/6; p50 44.1 s (laptop under load); $0** (re-run after the Phase 8 prompt change; Phase 4 table for the earlier run) | `make compare` |
+| Harbor golden pass rate, hosted | n/a (Meridian only) | **credit_guardrail 6/6, products_are_real 6/6, sources 6/6; retrieval_supports_recommendation 4/6** (two deficit / thin-saver cases: retrieval ranks the auto loan and the credit card, the model picks the everyday account, which retrieval never surfaced). p50 10.9 s, $0.0137 per query | `make evals PROVIDER=openai TENANT=harbor` |
+| Pilot report (measured vs assumed) | ~20 min manual, assumption | Meridian: seconds to profile **p50 5.2 s / p95 10.4 s** (platform time, reviewer wait subtracted), reviewer wait p50 180 s (one review), 4 runs, $0.0098 all-time spend; manual figure printed as an assumption | `make pilot TENANT=meridian` |
 | Minutes saved per statement | ~20 min manual (assumption, `docs/discovery.md`) | still an assumption; the platform now records what a real pilot would need to measure it (run and decision timestamps, query log) | |
 
 ## Phase 1 findings (2026-09-08)
@@ -95,6 +97,14 @@ What the table says, said out loud: the 3B local model passes every **blocking**
 - **The interview script is eight minutes and every step is a command.** Twelve concepts from the market scan, each with a file and the line to point at.
 - **Kubernetes and Terraform are stubs and say so.** The manifest is the same image as three deployments against an external Postgres; the Terraform file is the single host plus registry and a 30 GB disk (the full-disk deploy of August is why). Neither is what runs in production; both parse.
 - `CLAUDE.md` describes the doctrines and `make gate` so a coding agent works inside the same rules I do.
+
+## Phase 8 findings (2026-09-09)
+
+- **Harbor found two real bugs in the first run.** The grounded checks resolved product names outside the tenant scope, so Harbor's real "Term Deposit" was judged unknown by Meridian's shelf, and "Cashback Credit Card" resolved to Meridian's `credit_card.md`. Fixed by running the checks inside the tenant scope. And the system prompt named Meridian's products in its scenario guidance, so for Harbor the hosted model proposed "Debt Consolidation Loan" and "Recurring Deposit", the catalogue validator rejected them, and the retry doubled the bill: $0.0186 per query and p50 13.7 s against $0.0096 and 8.5 s for Meridian. Rewritten to product types; Harbor now costs $0.0137 at p50 10.9 s, Meridian is unchanged at $0.0099, and the local model still passes every blocking check (advisory percentages improved from 0/6 to 2/6).
+- **The miss I am recording, not fixing.** Two Harbor cases still fail `retrieval_supports_recommendation`: for a deficit or thin-saver customer retrieval ranks the auto loan and the credit card, the guardrail rightly rules those out, and the model picks the everyday account, whose chunk was never retrieved (it learned the name from the validator's retry message, which lists the shelf). Harbor's catalogue has no product written for that need. I tried a deterministic "customer need" clause in the retrieval query; it is a lexical query, so "credit" and "secured" pulled the credit card and the mortgage into Meridian's top four and the local model offered a personal loan to a deficit customer. Reverted. The honest fix is content (a product for that need) or a narrower validator hint, both measurable, neither done tonight.
+- **Rate limit across replicas without Redis.** One upsert per request on a `(user_id, minute)` row; two limiter instances over one database agree on the fourth call. Compose and the K8s manifest set `RATE_LIMIT_BACKEND=postgres`.
+- **Checkpoints are addressable only through their bank.** Thread ids are `<tenant_id>:<run_id>`; the same run id under Harbor's namespace finds zero rows. `DELETE /customers/{id}` (reviewer) cascades through eleven tables by foreign key and purges the checkpoint rows for the customer's runs; one audit row remains with counts and the reference, no name.
+- **The pilot report is timestamps, not a promise.** Platform time is run duration minus reviewer wait (the first version reported 163 s p95 because one run had waited three minutes for a human); the manual figure prints as an assumption.
 
 ## Caveats I say out loud
 

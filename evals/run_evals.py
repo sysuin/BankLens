@@ -58,8 +58,11 @@ def report_latency_and_cost() -> None:
     print(f"{'total':<8}{sum(COST_USD):>10.4f} USD for this run")
 
 
-def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
+def evaluate_grounded(
+    case: EvalCase, use_judge: bool, tenant: str = "meridian"
+) -> list[CheckResult]:
     """Run layer 2 for a single case. Requires an API key; costs money."""
+    from app.core.context import tenant_scope
     from app.pipeline.agent import build_profile
     from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
 
@@ -77,10 +80,19 @@ def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
     # Latency and cost are recorded per case so the report can print
     # percentiles: an eval that only scores quality hides the bill.
     started = time.perf_counter()
-    with get_openai_callback() as cb_retrieve:
-        chunks = retrieve(build_retrieval_query(metrics), build_vector_store())
-    with get_openai_callback() as cb_profile:
-        profile = build_profile(metrics, chunks)
+    with tenant_scope(tenant):
+        with get_openai_callback() as cb_retrieve:
+            chunks = retrieve(
+                build_retrieval_query(metrics),
+                build_vector_store(tenant),
+                tenant=tenant,
+            )
+        with get_openai_callback() as cb_profile:
+            profile = build_profile(metrics, chunks, tenant=tenant)
+        # The checks resolve product names against the catalogue in scope.
+        # Outside this block they would judge Harbor's answer by Meridian's
+        # shelf, which is exactly the bug the first Harbor run showed.
+        results = run_grounded_checks(profile, metrics, case.forbidden_products)
     LATENCY_MS.append((time.perf_counter() - started) * 1000)
     # Price by the provider that actually served the call: a local model's
     # tokens cost nothing, and the mini/primary model names differ per provider.
@@ -100,8 +112,6 @@ def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
                 spec.model, cb_profile.prompt_tokens, cb_profile.completion_tokens
             )
         )
-
-    results = run_grounded_checks(profile, metrics, case.forbidden_products)
 
     if use_judge:
         from evals.judge import judge_groundedness
@@ -311,10 +321,15 @@ def main() -> int:
         action="store_true",
         help="Report reranker A/B over the golden queries (requires OPENAI_API_KEY).",
     )
+    parser.add_argument(
+        "--tenant",
+        default="meridian",
+        help="Which bank's catalogue and credit policy the grounded layer uses.",
+    )
     args = parser.parse_args()
     use_llm = args.with_llm or args.judge
 
-    cases = build_cases()
+    cases = build_cases(args.tenant)
     rows: list[tuple[str, CheckResult]] = []
 
     print(f"Running layer 1 (deterministic) over {len(cases)} cases...")
@@ -333,10 +348,15 @@ def main() -> int:
 
     if use_llm:
         sampled = [c for c in cases if c.include_in_llm_eval]
-        print(f"Running layer 2 (grounded) over {len(sampled)} sampled cases...")
+        print(
+            f"Running layer 2 (grounded) over {len(sampled)} sampled cases "
+            f"for tenant '{args.tenant}'..."
+        )
         for case in sampled:
             try:
-                for result in evaluate_grounded(case, use_judge=args.judge):
+                for result in evaluate_grounded(
+                    case, use_judge=args.judge, tenant=args.tenant
+                ):
                     rows.append((case.case_id, result))
             except Exception as exc:  # noqa: BLE001 - a failed case is a result
                 rows.append(

@@ -226,9 +226,11 @@ class Settings(BaseSettings):
     gateway_cooldown_s: float = 60.0
     tenant_daily_budget_usd: float = 2.0
 
-    # Per-user request rate (sliding minute), enforced in-process. A
-    # multi-process deployment moves this to Redis; the check is one function.
+    # Per-user request rate. "memory" is a sliding minute in one process;
+    # "postgres" is a per-minute counter row shared by every API process
+    # (app/platform/ratelimit.py). Compose and the K8s manifest use postgres.
     rate_limit_per_minute: int = 120
+    rate_limit_backend: str = "memory"
 
     # Where the exact-key profile cache lives: "postgres" is shared between
     # the API and the worker and is tenant-scoped; "file" is the original

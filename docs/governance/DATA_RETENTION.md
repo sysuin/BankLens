@@ -17,7 +17,8 @@
 | Query log | `query_log` | Template name, parameters (ids, categories), role, actor | Audit horizon |
 | Jobs | `jobs` | The uploaded file bytes until processed | Purge `content` after `done`; suggested 7 days |
 | Profile cache | `profile_cache` | Narrative keyed by a hash of computed inputs | 30 days suggested |
-| LangGraph checkpoints | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | Graph state, incl. metrics and the retrieved passages | Purge with the run; **not tenant-scoped** (known limitation) |
+| LangGraph checkpoints | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | Graph state, incl. metrics and the retrieved passages | Purged by the customer delete; thread ids are `<tenant_id>:<run_id>`, so a run is only addressable through its own bank (no row-level policy on these three tables) |
+| Rate-limit counters | `rate_limit_buckets` | User id and a per-minute count | Swept by the limiter after two minutes |
 
 Every tenant table carries a row-level-security policy; the API role sees
 one tenant per transaction; the chat role sees only tenant-filtered views.
@@ -34,10 +35,12 @@ one tenant per transaction; the chat role sees only tenant-filtered views.
 
 ## Deletion
 
-Deleting a customer cascades to statements, transactions, metrics, profiles,
-runs, decisions, audit events, spans and query-log rows that reference them
-(foreign keys with `ON DELETE CASCADE`). Checkpoint rows must be deleted by
-run id in the same operation; a helper is on the Phase 8 backlog.
+`DELETE /customers/{id}` (reviewer role) removes the customer inside a
+tenant-pinned transaction; statements, transactions, metrics, profiles, runs,
+decisions, audit events, spans and query-log rows follow by foreign-key
+cascade, and the LangGraph checkpoint rows for those runs are purged by run
+id in the same call. One audit row remains, `retention / customer_deleted`,
+carrying counts and the customer reference only.
 
 ## Demo data
 

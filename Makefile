@@ -16,7 +16,7 @@ PY ?= .venv311/bin/python
 UVICORN ?= .venv311/bin/uvicorn
 STREAMLIT ?= .venv311/bin/streamlit
 
-.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare redteam bias gate
+.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare redteam bias gate pilot
 
 db:
 	$(PY) -c "from app.db.local import ensure_local_cluster, cluster_dir; ensure_local_cluster(); print('Postgres running at', cluster_dir())"
@@ -47,12 +47,19 @@ lint:
 # model with no API key; PROVIDER=openai on the hosted one.
 #   make evals                       deterministic layer + BM25 headroom
 #   make evals PROVIDER=ollama       + grounded layer on the local model
+#   make evals PROVIDER=openai TENANT=harbor   the grounded layer on Harbor's catalogue
+TENANT ?= meridian
 evals:
 ifdef PROVIDER
-	LLM_PROVIDER=$(PROVIDER) LLM_FALLBACK_ENABLED=false PROFILE_CACHE_ENABLED=false $(PY) -m evals.run_evals --with-llm
+	LLM_PROVIDER=$(PROVIDER) LLM_FALLBACK_ENABLED=false PROFILE_CACHE_ENABLED=false $(PY) -m evals.run_evals --with-llm --tenant $(TENANT)
 else
-	$(PY) -m evals.run_evals --headroom
+	$(PY) -m evals.run_evals --headroom --tenant $(TENANT)
 endif
+
+# What a pilot would measure: seconds to a profile, reviewer wait, throughput,
+# from the run and decision timestamps already in the database.
+pilot:
+	$(PY) -m scripts.pilot_report --tenant $(TENANT)
 
 # The same golden suite on both providers, side by side.
 compare:

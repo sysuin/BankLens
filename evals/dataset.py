@@ -63,8 +63,11 @@ RISK_SWEEP: list[tuple[float, str]] = [
 
 # A customer in deficit must never be steered into more unsecured credit,
 # whatever else the recommendation says. This is the one assertion in the set
-# that encodes a business rule rather than a formula.
-CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT = {"credit_card.md", "personal_loan.md"}
+# that encodes a business rule rather than a formula. The per-tenant sets live
+# with the graph's guardrail node, so the eval and the guardrail cannot drift.
+from app.pipeline.policy import forbidden_in_deficit  # noqa: E402
+
+CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT = set(forbidden_in_deficit("meridian"))
 
 
 @dataclass(frozen=True)
@@ -238,9 +241,17 @@ _LLM_EVAL_SAMPLE = {
 }
 
 
-def build_cases() -> list[EvalCase]:
-    """Assemble the full golden set: the swept grid plus the edge cases."""
+def build_cases(tenant: str = "meridian") -> list[EvalCase]:
+    """
+    Assemble the full golden set: the swept grid plus the edge cases.
+
+    The statements and the deterministic expectations are the same for
+    every bank (income is income); what changes per tenant is the catalogue
+    the grounded layer validates against and the products a deficit customer
+    must not be offered.
+    """
     cases: list[EvalCase] = []
+    forbidden = forbidden_in_deficit(tenant)
 
     for archetype in BASE_STATEMENTS:
         for target, expected_risk in RISK_SWEEP:
@@ -252,11 +263,7 @@ def build_cases() -> list[EvalCase]:
                     target_savings_rate=target,
                     expected_risk=expected_risk,
                     include_in_llm_eval=case_id in _LLM_EVAL_SAMPLE,
-                    forbidden_products=(
-                        frozenset(CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT)
-                        if target < 0
-                        else frozenset()
-                    ),
+                    forbidden_products=(forbidden if target < 0 else frozenset()),
                 )
             )
 

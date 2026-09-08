@@ -26,6 +26,7 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
   TENANT_DAILY_BUDGET_USD: "2.0"
   RATE_LIMIT_PER_MINUTE: "120"
+  RATE_LIMIT_BACKEND: postgres
   WORKER_CONCURRENCY: "2"
 ---
 apiVersion: apps/v1

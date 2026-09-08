@@ -150,8 +150,21 @@ async def compiled():
     return build_graph().compile(checkpointer=await get_checkpointer())
 
 
-def _config(run_id: str | uuid.UUID) -> dict:
-    return {"configurable": {"thread_id": str(run_id)}}
+def thread_id(tenant_id: str | uuid.UUID, run_id: str | uuid.UUID) -> str:
+    """
+    The checkpoint namespace for a run: `<tenant_id>:<run_id>`.
+
+    LangGraph's tables have no tenant column and the checkpointer connects as
+    the owner role, so RLS cannot scope them. The namespace does: a run can
+    only be addressed through its own tenant id, which the caller gets from a
+    row-level-secured table. A reviewer at the wrong bank asking for a run id
+    they somehow know finds no checkpoint at all.
+    """
+    return f"{tenant_id}:{run_id}"
+
+
+def _config(tenant_id: str | uuid.UUID, run_id: str | uuid.UUID) -> dict:
+    return {"configurable": {"thread_id": thread_id(tenant_id, run_id)}}
 
 
 async def _stream(app, payload, config) -> AsyncIterator[dict[str, Any]]:
@@ -240,7 +253,7 @@ async def start_run(
                 "banklens.user": actor_email,
             },
         ):
-            async for event in _stream(app, initial, _config(run_id)):
+            async for event in _stream(app, initial, _config(tenant_id, run_id)):
                 yield event
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised as an event
         logger.exception("run %s failed", run_id)
@@ -287,7 +300,9 @@ async def resume_run(
                 "review.action": action,
             },
         ):
-            async for event in _stream(app, Command(resume=answer), _config(run_id)):
+            async for event in _stream(
+                app, Command(resume=answer), _config(tenant_id, run_id)
+            ):
                 yield event
     except Exception as exc:  # noqa: BLE001
         logger.exception("resume %s failed", run_id)
@@ -299,11 +314,39 @@ async def resume_run(
     yield {"event": "done", "run_id": str(run_id)}
 
 
-async def pending_interrupt(run_id: uuid.UUID) -> dict | None:
+async def pending_interrupt(tenant_id: uuid.UUID, run_id: uuid.UUID) -> dict | None:
     """The interrupt payload a checkpointed run is waiting on, if any."""
     app = await compiled()
-    snapshot = await app.aget_state(_config(run_id))
+    snapshot = await app.aget_state(_config(tenant_id, run_id))
     for task in getattr(snapshot, "tasks", ()):
         for item in getattr(task, "interrupts", ()):
             return getattr(item, "value", None)
     return None
+
+
+CHECKPOINT_TABLES = ("checkpoint_writes", "checkpoint_blobs", "checkpoints")
+
+
+async def purge_checkpoints(tenant_id: uuid.UUID, run_ids: list[uuid.UUID]) -> int:
+    """
+    Delete every checkpoint row for these runs of this tenant.
+
+    The retention helper the data-handling note promised: customer deletion
+    cascades through the tenant tables by foreign key, and this removes the
+    LangGraph state that foreign keys cannot reach. Rows are addressed by
+    the tenant-prefixed thread id, so a run id from another bank deletes
+    nothing. Returns the number of rows removed.
+    """
+    if not run_ids:
+        return 0
+    threads = [thread_id(tenant_id, r) for r in run_ids]
+    await get_checkpointer()
+    assert _pool is not None
+    removed = 0
+    async with _pool.connection() as conn:
+        for table in CHECKPOINT_TABLES:
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE thread_id = ANY(%s)", (threads,)
+            )
+            removed += cur.rowcount or 0
+    return removed
