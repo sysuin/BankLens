@@ -61,9 +61,12 @@ COPY knowledge_base/ ./knowledge_base/
 COPY data/ ./data/
 COPY prompts/ ./prompts/
 COPY .streamlit/ ./.streamlit/
+COPY alembic/ ./alembic/
+COPY alembic.ini mcp_server.py ./
 
-# Streamlit default port
-EXPOSE 8501
+# 8501: Streamlit console (default CMD). 8000: the API, when the container is
+# started with `uvicorn app.api.app:app` (see docker-compose.yml).
+EXPOSE 8501 8000
 
 # Health check — Streamlit exposes a /_stcore/health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

@@ -39,7 +39,7 @@ os.chdir(Path(__file__).resolve().parent)
 mcp = MCPServer("banklens")
 
 
-def _analyze(csv_path: str) -> tuple:
+def _analyze(csv_path: str, tenant: str | None = None) -> tuple:
     """Run the full pipeline on a statement CSV. Shared by both tools."""
     import pandas as pd
 
@@ -57,26 +57,31 @@ def _analyze(csv_path: str) -> tuple:
     df = categorize_dataframe(df)
     metrics = compute_metrics(df)
 
-    chunks = retrieve(build_retrieval_query(metrics), build_vector_store())
+    chunks = retrieve(
+        build_retrieval_query(metrics), build_vector_store(tenant), tenant=tenant
+    )
     return metrics, chunks
 
 
 @mcp.tool()
-def analyze_statement(csv_path: str) -> dict:
+def analyze_statement(csv_path: str, tenant: str = "") -> dict:
     """
     Analyze a bank statement CSV and return the full customer profile.
 
     Runs sanitization, categorization, metric computation, hybrid RAG
     retrieval and grounded LLM profiling — the same pipeline as the web app.
     The CSV needs columns: date, description, amount, type (Credit/Debit).
+    `tenant` selects which bank's product catalogue is used (a directory under
+    knowledge_base/); empty means the configured default tenant.
 
     Returns the computed metrics and the AI-generated profile, including the
     two product recommendations and the RM pitch hooks.
     """
     from app.pipeline.agent import build_profile
 
-    metrics, chunks = _analyze(csv_path)
-    profile = build_profile(metrics, chunks)
+    resolved = tenant or None
+    metrics, chunks = _analyze(csv_path, resolved)
+    profile = build_profile(metrics, chunks, tenant=resolved)
 
     return {
         "metrics": metrics.model_dump(),
@@ -110,16 +115,19 @@ def compute_statement_metrics(csv_path: str) -> dict:
 
 
 @mcp.tool()
-def search_products(query: str) -> list[dict]:
+def search_products(query: str, tenant: str = "") -> list[dict]:
     """
-    Search the banking product knowledge base.
+    Search a bank's product knowledge base.
 
-    Hybrid retrieval (dense embeddings + BM25, RRF-fused) over the ten product
-    documents. Returns the most relevant passages with their source filenames.
+    Hybrid retrieval (dense embeddings + BM25, RRF-fused) over the tenant's
+    product documents. Returns the most relevant passages with their source
+    filenames. `tenant` is a directory under knowledge_base/; empty means the
+    configured default tenant.
     """
     from app.pipeline.rag import build_vector_store, retrieve
 
-    return retrieve(query, build_vector_store())
+    resolved = tenant or None
+    return retrieve(query, build_vector_store(resolved), tenant=resolved)
 
 
 if __name__ == "__main__":

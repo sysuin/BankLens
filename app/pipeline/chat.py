@@ -30,6 +30,7 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.context import current_tenant
 from app.core.logger import get_logger
 from app.pipeline.analyzer import FinancialMetrics
 
@@ -56,13 +57,20 @@ as-is; do not re-derive or dispute them.
 """
 
 
-def make_tools(metrics: FinancialMetrics, categorized_df: pd.DataFrame) -> list:
+def make_tools(
+    metrics: FinancialMetrics,
+    categorized_df: pd.DataFrame,
+    tenant: str | None = None,
+) -> list:
     """
     Build the tool belt for one analyzed statement.
 
     Tools close over the session's data instead of taking it as arguments, so
     the model can never ask about a different customer than the one on screen.
+    The tenant is captured the same way: product search is bound to this
+    bank's catalogue at construction time, not chosen by the model.
     """
+    bound_tenant = tenant or current_tenant()
 
     @tool
     def get_customer_metrics() -> dict:
@@ -77,7 +85,7 @@ def make_tools(metrics: FinancialMetrics, categorized_df: pd.DataFrame) -> list:
         Use for product features, eligibility, rates, and suitability."""
         from app.pipeline.rag import build_vector_store, retrieve
 
-        return retrieve(query, build_vector_store())
+        return retrieve(query, build_vector_store(bound_tenant), tenant=bound_tenant)
 
     @tool
     def get_category_spending(category: str) -> dict:
@@ -110,6 +118,7 @@ def run_chat_turn(
     history: list[BaseMessage],
     metrics: FinancialMetrics,
     categorized_df: pd.DataFrame,
+    tenant: str | None = None,
 ) -> Iterator[str]:
     """
     Answer one question, streaming the final answer token by token.
@@ -124,7 +133,7 @@ def run_chat_turn(
     """
     from langchain_openai import ChatOpenAI
 
-    tools = make_tools(metrics, categorized_df)
+    tools = make_tools(metrics, categorized_df, tenant)
     tools_by_name = {t.name: t for t in tools}
 
     llm = ChatOpenAI(

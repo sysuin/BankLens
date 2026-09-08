@@ -26,16 +26,58 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.core.context import current_tenant
 from app.core.logger import get_logger
 from app.pipeline.reranker import rerank
 
 logger = get_logger(__name__)
 
-# Absolute path to the knowledge base directory
-KNOWLEDGE_BASE_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge_base"
+# ── Tenancy ───────────────────────────────────────────────────────────────────
+#
+# Each tenant (a bank) has its own product catalogue under
+# knowledge_base/<tenant>/, its own Chroma collection persisted under
+# <chroma_persist_dir>/<tenant>/, and its own BM25 index. Nothing below the
+# public functions takes a tenant that defaults to "whatever is in scope" —
+# the tenant is resolved once at the top and passed down explicitly, so a
+# cross-tenant read has to be written on purpose.
 
-# Global module cache for BM25 retriever to avoid re-reading files on every query
-_CACHED_BM25_RETRIEVER = None
+KNOWLEDGE_BASE_ROOT = Path(__file__).resolve().parent.parent.parent / "knowledge_base"
+
+# The default tenant's catalogue. Kept as a module constant because the
+# evaluation harness and the tests address the catalogue directly.
+KNOWLEDGE_BASE_DIR = KNOWLEDGE_BASE_ROOT / settings.default_tenant
+
+
+def _tenant_or_default(tenant: str | None) -> str:
+    return tenant or current_tenant()
+
+
+def kb_dir(tenant: str | None = None) -> Path:
+    """The knowledge-base directory for a tenant."""
+    resolved = _tenant_or_default(tenant)
+    if resolved == settings.default_tenant:
+        # Honour monkeypatched KNOWLEDGE_BASE_DIR in tests for the default tenant.
+        return KNOWLEDGE_BASE_DIR
+    return KNOWLEDGE_BASE_ROOT / resolved
+
+
+def list_tenants() -> list[str]:
+    """Tenants that have a catalogue on disk."""
+    if not KNOWLEDGE_BASE_ROOT.exists():
+        return []
+    return sorted(p.name for p in KNOWLEDGE_BASE_ROOT.iterdir() if p.is_dir())
+
+
+def persist_dir_for(tenant: str | None = None) -> str:
+    return str(Path(settings.chroma_persist_dir) / _tenant_or_default(tenant))
+
+
+def collection_name_for(tenant: str | None = None) -> str:
+    return f"{settings.chroma_collection_name}_{_tenant_or_default(tenant)}"
+
+
+# Per-tenant BM25 retrievers, built once per process.
+_CACHED_BM25_RETRIEVERS: dict[str, BM25Retriever] = {}
 
 # Written inside the persist directory alongside the Chroma index. Records what
 # the index was built from, so a stale one can be detected on the next startup.
@@ -45,20 +87,21 @@ INDEX_FINGERPRINT_FILE = ".kb_fingerprint"
 # ── Step 1: Load ─────────────────────────────────────────────────────────────
 
 
-def _load_documents() -> list:
-    """Load all markdown files from the knowledge_base/ directory."""
-    if not KNOWLEDGE_BASE_DIR.exists():
+def _load_documents(tenant: str | None = None) -> list:
+    """Load all markdown files from the tenant's knowledge_base directory."""
+    directory = kb_dir(tenant)
+    if not directory.exists():
         raise FileNotFoundError(
-            f"Knowledge base directory not found at: {KNOWLEDGE_BASE_DIR}\n"
-            "Make sure the knowledge_base/ directory exists at the project root."
+            f"Knowledge base directory not found at: {directory}\n"
+            "Each tenant needs a directory under knowledge_base/ at the project root."
         )
 
     documents = []
-    md_files = sorted(KNOWLEDGE_BASE_DIR.glob("*.md"))
+    md_files = sorted(directory.glob("*.md"))
 
     if not md_files:
         raise FileNotFoundError(
-            f"No .md files found in {KNOWLEDGE_BASE_DIR}. "
+            f"No .md files found in {directory}. "
             "The knowledge base must contain at least one markdown file."
         )
 
@@ -107,7 +150,7 @@ def _chunk_documents(documents: list) -> list:
 # what makes this worth detecting explicitly rather than trusting to look wrong.
 
 
-def compute_kb_fingerprint() -> str:
+def compute_kb_fingerprint(tenant: str | None = None) -> str:
     """
     Hash everything the persisted index depends on.
 
@@ -118,7 +161,7 @@ def compute_kb_fingerprint() -> str:
     """
     digest = hashlib.sha256()
 
-    for md_file in sorted(KNOWLEDGE_BASE_DIR.glob("*.md")):
+    for md_file in sorted(kb_dir(tenant).glob("*.md")):
         digest.update(md_file.name.encode("utf-8"))
         digest.update(md_file.read_bytes())
 
@@ -159,34 +202,43 @@ def write_fingerprint(persist_dir: str, fingerprint: str) -> None:
 # ── Steps 3–4: Embed and Persist Vector Store & BM25 Cache ──────────────────
 
 
-def get_cached_bm25_retriever() -> BM25Retriever | None:
-    """Get or initialize the cached BM25 retriever instance."""
-    global _CACHED_BM25_RETRIEVER
-    if _CACHED_BM25_RETRIEVER is None:
+def get_cached_bm25_retriever(tenant: str | None = None) -> BM25Retriever | None:
+    """Get or initialize the cached BM25 retriever for a tenant."""
+    resolved = _tenant_or_default(tenant)
+    if resolved not in _CACHED_BM25_RETRIEVERS:
         try:
-            documents = _load_documents()
+            documents = _load_documents(resolved)
             chunks = _chunk_documents(documents)
-            _CACHED_BM25_RETRIEVER = BM25Retriever.from_documents(chunks)
-            _CACHED_BM25_RETRIEVER.k = settings.retrieval_k
-            logger.info("Initialized and cached BM25 index at startup.")
+            retriever = BM25Retriever.from_documents(chunks)
+            retriever.k = settings.retrieval_k
+            _CACHED_BM25_RETRIEVERS[resolved] = retriever
+            logger.info("Initialized and cached BM25 index for tenant '%s'.", resolved)
         except Exception as e:
-            logger.warning("Failed to initialize BM25 index: %s", e)
-            _CACHED_BM25_RETRIEVER = None
-    return _CACHED_BM25_RETRIEVER
+            logger.warning("Failed to initialize BM25 index for '%s': %s", resolved, e)
+            return None
+    return _CACHED_BM25_RETRIEVERS[resolved]
+
+
+def reset_bm25_cache() -> None:
+    """Drop cached BM25 indexes (tests and catalogue reloads)."""
+    _CACHED_BM25_RETRIEVERS.clear()
 
 
 def _rebuild_vector_store(
-    persist_dir: str, embeddings: OpenAIEmbeddings, fingerprint: str
+    persist_dir: str,
+    embeddings: OpenAIEmbeddings,
+    fingerprint: str,
+    tenant: str | None = None,
 ) -> Chroma:
     """Discard any existing index and rebuild it from the knowledge base."""
     shutil.rmtree(persist_dir, ignore_errors=True)
 
-    documents = _load_documents()
+    documents = _load_documents(tenant)
     chunks = _chunk_documents(documents)
     vector_store = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
-        collection_name=settings.chroma_collection_name,
+        collection_name=collection_name_for(tenant),
         persist_directory=persist_dir,
     )
 
@@ -195,26 +247,33 @@ def _rebuild_vector_store(
     return vector_store
 
 
-def build_vector_store() -> Chroma:
+def build_vector_store(tenant: str | None = None) -> Chroma:
     """
-    Build or load the ChromaDB vector store.
+    Build or load the ChromaDB vector store for a tenant.
 
     An existing index is reused only when its fingerprint matches the current
     knowledge base and indexing settings. It is rebuilt when the inputs have
     changed, when it was built before fingerprinting existed, or when it fails
     to load at all.
     """
+    resolved = _tenant_or_default(tenant)
     embeddings = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
         openai_api_key=settings.openai_api_key or "dummy_key",
     )
 
-    persist_dir = settings.chroma_persist_dir
-    fingerprint = compute_kb_fingerprint()
+    persist_dir = persist_dir_for(resolved)
+    fingerprint = compute_kb_fingerprint(resolved)
 
     if not (os.path.exists(persist_dir) and os.listdir(persist_dir)):
-        logger.info("No persisted index found. Building ChromaDB from knowledge base.")
-        return _finalize(_rebuild_vector_store(persist_dir, embeddings, fingerprint))
+        logger.info(
+            "No persisted index for tenant '%s'. Building ChromaDB from knowledge base.",
+            resolved,
+        )
+        return _finalize(
+            _rebuild_vector_store(persist_dir, embeddings, fingerprint, resolved),
+            resolved,
+        )
 
     stored = read_stored_fingerprint(persist_dir)
     if stored != fingerprint:
@@ -223,7 +282,10 @@ def build_vector_store() -> Chroma:
             persist_dir,
             "no fingerprint recorded" if stored is None else "knowledge base changed",
         )
-        return _finalize(_rebuild_vector_store(persist_dir, embeddings, fingerprint))
+        return _finalize(
+            _rebuild_vector_store(persist_dir, embeddings, fingerprint, resolved),
+            resolved,
+        )
 
     logger.info(
         "Persisted ChromaDB found at '%s' and fingerprint matches. Loading existing index.",
@@ -231,7 +293,7 @@ def build_vector_store() -> Chroma:
     )
     try:
         vector_store = Chroma(
-            collection_name=settings.chroma_collection_name,
+            collection_name=collection_name_for(resolved),
             embedding_function=embeddings,
             persist_directory=persist_dir,
         )
@@ -240,14 +302,16 @@ def build_vector_store() -> Chroma:
             "Persisted ChromaDB index incompatible or corrupted (%s). Self-healing and rebuilding.",
             e,
         )
-        vector_store = _rebuild_vector_store(persist_dir, embeddings, fingerprint)
+        vector_store = _rebuild_vector_store(
+            persist_dir, embeddings, fingerprint, resolved
+        )
 
-    return _finalize(vector_store)
+    return _finalize(vector_store, resolved)
 
 
-def _finalize(vector_store: Chroma) -> Chroma:
+def _finalize(vector_store: Chroma, tenant: str | None = None) -> Chroma:
     """Warm the BM25 cache at startup so the first query is not slow."""
-    get_cached_bm25_retriever()
+    get_cached_bm25_retriever(tenant)
     return vector_store
 
 
@@ -295,14 +359,16 @@ def build_retrieval_query(metrics) -> str:
     )
 
 
-def _fused_candidates(query: str, vector_store: Chroma, candidate_k: int) -> list[dict]:
+def _fused_candidates(
+    query: str, vector_store: Chroma, candidate_k: int, tenant: str | None = None
+) -> list[dict]:
     """One query's hybrid candidate pool: dense + BM25, RRF-fused."""
     dense_retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": candidate_k},
     )
 
-    bm25 = get_cached_bm25_retriever()
+    bm25 = get_cached_bm25_retriever(tenant)
     if bm25 is not None:
         try:
             original_bm25_k = bm25.k
@@ -429,6 +495,7 @@ def retrieve(
     vector_store: Chroma,
     use_reranker: bool = True,
     use_multi_query: bool | None = None,
+    tenant: str | None = None,
 ) -> list[dict]:
     """
     Retrieve product context: hybrid fusion over a wide candidate pool, then rerank.
@@ -445,6 +512,8 @@ def retrieve(
         use_multi_query: Expand the query into facet rewrites and fuse their
                          result lists. None defers to settings.multi_query_enabled;
                          the A/B evaluation passes explicit True/False.
+        tenant: Whose BM25 index to fuse with. Must match the tenant the
+                vector store was built for; None means the tenant in scope.
 
     Returns:
         Up to retrieval_k chunks as {"content": ..., "source": ...}.
@@ -457,11 +526,13 @@ def retrieve(
         queries += _generate_query_variants(query, settings.multi_query_count)
 
     if len(queries) > 1:
-        per_query = [_fused_candidates(q, vector_store, candidate_k) for q in queries]
+        per_query = [
+            _fused_candidates(q, vector_store, candidate_k, tenant) for q in queries
+        ]
         anchor_weights = [1.0] + [0.5] * (len(per_query) - 1)
         candidates = _rrf_merge_chunk_lists(per_query, candidate_k, anchor_weights)
     else:
-        candidates = _fused_candidates(query, vector_store, candidate_k)
+        candidates = _fused_candidates(query, vector_store, candidate_k, tenant)
 
     if use_reranker:
         retrieved = rerank(query, candidates, top_k=settings.retrieval_k)

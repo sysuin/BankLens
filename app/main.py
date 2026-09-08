@@ -19,6 +19,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.pipeline.analyzer import compute_metrics
 from app.pipeline.categorizer import categorize_dataframe
@@ -156,6 +157,203 @@ def run_ai_pipeline(metrics, categorized_df) -> CustomerProfile | None:
             expanded=False,
         )
         return profile
+
+
+# ── Statement views (shared by direct mode and API mode) ─────────────────────
+
+
+def render_statement_views(
+    metrics,
+    categorized_df,
+    *,
+    generate_profile,
+    chat_stream,
+    sidebar_generate_clicked: bool,
+    allow_generate: bool = True,
+) -> None:
+    """
+    The four views over one analysed statement.
+
+    `generate_profile()` returns a CustomerProfile (or None on failure) and
+    `chat_stream(question)` yields answer tokens. Direct mode passes the
+    pipeline functions; API mode passes HTTP calls. The views do not know
+    which.
+    """
+    # ── Custom Styled Tab Navigation Bar ─────────────────────────────────────
+    # The wrapper div lets CSS style the whole row as one segmented control
+    # rather than four loose buttons (see .bl-navwrap in components.py).
+    st.markdown("<div class='bl-navwrap'>", unsafe_allow_html=True)
+    col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
+
+    with col_nav1:
+        if st.button(
+            "📋 Transaction Ledger",
+            use_container_width=True,
+            type=(
+                "primary" if st.session_state.active_tab == "ledger" else "secondary"
+            ),
+        ):
+            st.session_state.active_tab = "ledger"
+            st.rerun()
+
+    with col_nav2:
+        if st.button(
+            "📊 Financial Analytics",
+            use_container_width=True,
+            type=(
+                "primary" if st.session_state.active_tab == "analytics" else "secondary"
+            ),
+        ):
+            st.session_state.active_tab = "analytics"
+            st.rerun()
+
+    with col_nav3:
+        if st.button(
+            "🤖 AI Profiler & RAG Pitch",
+            use_container_width=True,
+            type=(
+                "primary" if st.session_state.active_tab == "profiler" else "secondary"
+            ),
+        ):
+            st.session_state.active_tab = "profiler"
+            st.rerun()
+
+    with col_nav4:
+        if st.button(
+            "💬 Ask BankLens",
+            use_container_width=True,
+            type=("primary" if st.session_state.active_tab == "chat" else "secondary"),
+        ):
+            st.session_state.active_tab = "chat"
+            st.rerun()
+
+    st.markdown(
+        "<hr style='margin-top:0.2rem; margin-bottom:1.5rem;'>", unsafe_allow_html=True
+    )
+
+    # ── View 1: Transaction Ledger ───────────────────────────────────────────
+    if st.session_state.active_tab == "ledger":
+        st.success(
+            "🔒 **PII Privacy Guard Active:** Account & Sensitive ID numbers masked."
+        )
+        st.markdown(
+            f"**{metrics.transaction_count} ledger entries** | "
+            f"Period: `{metrics.period}` | "
+            f"Credits: **{metrics.credit_count}** | "
+            f"Debits: **{metrics.debit_count}**"
+        )
+
+        all_categories = sorted(categorized_df["category"].unique().tolist())
+        selected_category = st.selectbox(
+            "Filter transactions by category",
+            options=["All Categories"] + all_categories,
+        )
+
+        filtered_df = (
+            categorized_df
+            if selected_category == "All Categories"
+            else categorized_df[categorized_df["category"] == selected_category]
+        )
+
+        render_transaction_table(filtered_df)
+
+    # ── View 2: Financial Analytics ───────────────────────────────────────────
+    elif st.session_state.active_tab == "analytics":
+        render_metric_cards(metrics)
+        st.markdown("---")
+
+        col_chart1, col_chart2 = st.columns(2)
+        with col_chart1:
+            render_spending_by_category(categorized_df)
+        with col_chart2:
+            render_income_vs_expense(metrics.total_income, metrics.total_expenses)
+
+        st.markdown("---")
+        st.markdown("#### 🔝 Top Spending Categories")
+        if metrics.top_categories:
+            top_df = pd.DataFrame(metrics.top_categories)
+            top_df["total_spent"] = top_df["total_spent"].apply(lambda x: f"₹{x:,.2f}")
+            st.dataframe(
+                top_df.rename(
+                    columns={
+                        "category": "Category",
+                        "total_spent": "Total Spent",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    # ── View 3: AI Profiling & RAG Product Pitch ───────────────────────────────
+    elif st.session_state.active_tab == "profiler":
+        st.markdown(
+            "Click **Generate AI Customer Profile** below to execute the live multi-stage GenAI pipeline:"
+        )
+
+        tab_generate_clicked = allow_generate and st.button(
+            "🚀 Generate AI Customer Profile & Pitch",
+            type="primary",
+            use_container_width=True,
+            key="tab3_generate_btn",
+        )
+        if not allow_generate:
+            st.info(
+                "Reviewers read profiles; generating one is a Relationship Manager action."
+            )
+
+        if sidebar_generate_clicked or tab_generate_clicked:
+            st.session_state.ai_profile = generate_profile()
+
+        if st.session_state.ai_profile:
+            prof = st.session_state.ai_profile
+            render_profile_card(prof)
+            st.markdown("---")
+            render_recommendation(prof)
+
+    # Render application footer
+    # ── View 4: Ask BankLens (agentic chat over the analyzed statement) ──────
+    elif st.session_state.active_tab == "chat":
+        st.markdown("#### 💬 Ask BankLens about this statement")
+        st.caption(
+            "A tool-calling assistant: it can fetch the computed metrics, search "
+            "the product knowledge base, and inspect category spending. Answers "
+            "stream in live."
+        )
+
+        # History is keyed to the loaded statement so switching statements
+        # cannot leak one customer's conversation into another's.
+        statement_key = st.session_state.get("loaded_statement_key")
+        current_key = (
+            f"{metrics.period}|{metrics.transaction_count}|{metrics.total_income}"
+        )
+        if statement_key != current_key:
+            st.session_state.chat_history = []
+            st.session_state.loaded_statement_key = current_key
+
+        from langchain_core.messages import AIMessage as _AI
+
+        for message in st.session_state.chat_history:
+            role = "assistant" if isinstance(message, _AI) else "user"
+            with st.chat_message(role):
+                st.markdown(message.content)
+
+        if question := st.chat_input("e.g. Why is this customer rated Low risk?"):
+            with st.chat_message("user"):
+                st.markdown(question)
+            with st.chat_message("assistant"):
+                try:
+                    st.write_stream(chat_stream(question))
+                except Exception as e:
+                    st.error(f"Chat error: {e}")
+
+
+def _direct_chat_stream(question: str, metrics, categorized_df):
+    """Direct mode: run the tool-calling chat in-process."""
+    from app.pipeline.chat import run_chat_turn
+
+    return run_chat_turn(
+        question, st.session_state.chat_history, metrics, categorized_df
+    )
 
 
 # ── Main Application Controller ───────────────────────────────────────────────
@@ -344,180 +542,243 @@ def main() -> None:
         st.error(f"❌ **Error computing financial metrics:** {e}")
         return
 
-    # ── Custom Styled Tab Navigation Bar ─────────────────────────────────────
-    # The wrapper div lets CSS style the whole row as one segmented control
-    # rather than four loose buttons (see .bl-navwrap in components.py).
-    st.markdown("<div class='bl-navwrap'>", unsafe_allow_html=True)
-    col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
+    render_statement_views(
+        metrics,
+        categorized_df,
+        generate_profile=lambda: run_ai_pipeline(metrics, categorized_df),
+        chat_stream=lambda question: _direct_chat_stream(
+            question, metrics, categorized_df
+        ),
+        sidebar_generate_clicked=sidebar_generate_clicked,
+    )
+    render_footer()
 
-    with col_nav1:
-        if st.button(
-            "📋 Transaction Ledger",
-            use_container_width=True,
-            type=(
-                "primary" if st.session_state.active_tab == "ledger" else "secondary"
-            ),
-        ):
-            st.session_state.active_tab = "ledger"
-            st.rerun()
 
-    with col_nav2:
-        if st.button(
-            "📊 Financial Analytics",
-            use_container_width=True,
-            type=(
-                "primary" if st.session_state.active_tab == "analytics" else "secondary"
-            ),
-        ):
-            st.session_state.active_tab = "analytics"
-            st.rerun()
+# ── API mode ──────────────────────────────────────────────────────────────────
+#
+# With BANKLENS_API_URL set, this console is a client of the BankLens API:
+# sign in as a bank user, pick or upload a statement, and every view renders
+# from what the API returns. The pipeline never runs in this process.
 
-    with col_nav3:
-        if st.button(
-            "🤖 AI Profiler & RAG Pitch",
-            use_container_width=True,
-            type=(
-                "primary" if st.session_state.active_tab == "profiler" else "secondary"
-            ),
-        ):
-            st.session_state.active_tab = "profiler"
-            st.rerun()
 
-    with col_nav4:
-        if st.button(
-            "💬 Ask BankLens",
-            use_container_width=True,
-            type=("primary" if st.session_state.active_tab == "chat" else "secondary"),
-        ):
-            st.session_state.active_tab = "chat"
-            st.rerun()
+def main_api() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
 
-    st.markdown(
-        "<hr style='margin-top:0.2rem; margin-bottom:1.5rem;'>", unsafe_allow_html=True
+    from app.ui.api_client import (
+        ApiError,
+        BankLensClient,
+        dataframe_from_detail,
+        metrics_from_detail,
+        profile_from_response,
     )
 
-    # ── View 1: Transaction Ledger ───────────────────────────────────────────
-    if st.session_state.active_tab == "ledger":
-        st.success(
-            "🔒 **PII Privacy Guard Active:** Account & Sensitive ID numbers masked."
-        )
-        st.markdown(
-            f"**{metrics.transaction_count} ledger entries** | "
-            f"Period: `{metrics.period}` | "
-            f"Credits: **{metrics.credit_count}** | "
-            f"Debits: **{metrics.debit_count}**"
-        )
+    inject_custom_css()
+    render_header()
+    ss = st.session_state
+    for key, default in (
+        ("active_tab", "profiler"),
+        ("ai_profile", None),
+        ("chat_history", []),
+        ("api_token", None),
+        ("api_user", None),
+        ("selected_statement_id", None),
+        ("profile_for", None),
+    ):
+        if key not in ss:
+            ss[key] = default
 
-        all_categories = sorted(categorized_df["category"].unique().tolist())
-        selected_category = st.selectbox(
-            "Filter transactions by category",
-            options=["All Categories"] + all_categories,
-        )
+    client = BankLensClient(settings.banklens_api_url, ss.api_token)
 
-        filtered_df = (
-            categorized_df
-            if selected_category == "All Categories"
-            else categorized_df[categorized_df["category"] == selected_category]
-        )
+    def sign_out() -> None:
+        ss.api_token = None
+        ss.api_user = None
+        ss.selected_statement_id = None
+        ss.ai_profile = None
+        ss.chat_history = []
+        st.rerun()
 
-        render_transaction_table(filtered_df)
-
-    # ── View 2: Financial Analytics ───────────────────────────────────────────
-    elif st.session_state.active_tab == "analytics":
-        render_metric_cards(metrics)
-        st.markdown("---")
-
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            render_spending_by_category(categorized_df)
-        with col_chart2:
-            render_income_vs_expense(metrics.total_income, metrics.total_expenses)
-
-        st.markdown("---")
-        st.markdown("#### 🔝 Top Spending Categories")
-        if metrics.top_categories:
-            top_df = pd.DataFrame(metrics.top_categories)
-            top_df["total_spent"] = top_df["total_spent"].apply(lambda x: f"₹{x:,.2f}")
-            st.dataframe(
-                top_df.rename(
-                    columns={
-                        "category": "Category",
-                        "total_spent": "Total Spent",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    # ── View 3: AI Profiling & RAG Product Pitch ───────────────────────────────
-    elif st.session_state.active_tab == "profiler":
-        st.markdown(
-            "Click **Generate AI Customer Profile** below to execute the live multi-stage GenAI pipeline:"
-        )
-
-        tab_generate_clicked = st.button(
-            "🚀 Generate AI Customer Profile & Pitch",
-            type="primary",
-            use_container_width=True,
-            key="tab3_generate_btn",
-        )
-
-        if sidebar_generate_clicked or tab_generate_clicked:
-            st.session_state.ai_profile = run_ai_pipeline(metrics, categorized_df)
-
-        if st.session_state.ai_profile:
-            prof = st.session_state.ai_profile
-            render_profile_card(prof)
-            st.markdown("---")
-            render_recommendation(prof)
-
-    # Render application footer
-    # ── View 4: Ask BankLens (agentic chat over the analyzed statement) ──────
-    elif st.session_state.active_tab == "chat":
-        st.markdown("#### 💬 Ask BankLens about this statement")
-        st.caption(
-            "A tool-calling assistant: it can fetch the computed metrics, search "
-            "the product knowledge base, and inspect category spending. Answers "
-            "stream in live."
-        )
-
-        # History is keyed to the loaded statement so switching statements
-        # cannot leak one customer's conversation into another's.
-        statement_key = st.session_state.get("loaded_statement_key")
-        current_key = (
-            f"{metrics.period}|{metrics.transaction_count}|{metrics.total_income}"
-        )
-        if statement_key != current_key:
-            st.session_state.chat_history = []
-            st.session_state.loaded_statement_key = current_key
-
-        from langchain_core.messages import AIMessage as _AI
-
-        for message in st.session_state.chat_history:
-            role = "assistant" if isinstance(message, _AI) else "user"
-            with st.chat_message(role):
-                st.markdown(message.content)
-
-        if question := st.chat_input("e.g. Why is this customer rated Low risk?"):
-            with st.chat_message("user"):
-                st.markdown(question)
-            from app.pipeline.chat import run_chat_turn
-
-            with st.chat_message("assistant"):
+    sidebar_generate_clicked = False
+    with st.sidebar:
+        if not ss.api_token:
+            st.markdown("## 🔐 Sign in")
+            try:
+                tenants = client.health().get("tenants_on_disk", [])
+            except Exception as exc:  # noqa: BLE001 - shown to the user
+                st.error(f"API unreachable at {settings.banklens_api_url}: {exc}")
+                return
+            tenant = st.selectbox("Bank", tenants or ["meridian"])
+            email = st.text_input("Email", value=f"rm@{tenant}.example")
+            password = st.text_input("Password", type="password", value="banklens-demo")
+            if st.button("Sign in", type="primary", use_container_width=True):
                 try:
-                    st.write_stream(
-                        run_chat_turn(
-                            question,
-                            st.session_state.chat_history,
-                            metrics,
-                            categorized_df,
-                        )
-                    )
-                except Exception as e:
-                    st.error(f"Chat error: {e}")
+                    body = client.login(tenant, email, password)
+                    ss.api_token = body["access_token"]
+                    ss.api_user = body
+                    st.rerun()
+                except ApiError as exc:
+                    st.error(exc.detail)
+            st.caption(
+                "Demo users: rm@<bank>.example and reviewer@<bank>.example, "
+                "password banklens-demo."
+            )
+            return
 
+        user = ss.api_user
+        is_rm = user["role"] == "rm"
+        st.markdown(
+            f"**{user['full_name']}**  \n`{user['tenant']}` · role **{user['role']}**"
+        )
+        if st.button("Sign out", use_container_width=True):
+            sign_out()
+        st.markdown("---")
+
+        st.markdown("## 📊 Statements")
+        try:
+            statements = client.statements()
+            customers = client.customers() if is_rm else []
+        except ApiError as exc:
+            if exc.status_code == 401:
+                sign_out()
+            st.error(exc.detail)
+            return
+
+        options = {
+            f"{s['customer_name']} · {s['filename']} · {s['period']}": s["id"]
+            for s in statements
+        }
+        if options:
+            ids = list(options.values())
+            index = (
+                ids.index(ss.selected_statement_id)
+                if ss.selected_statement_id in ids
+                else 0
+            )
+            choice = st.selectbox("Choose a statement", list(options), index=index)
+            ss.selected_statement_id = options[choice]
+        else:
+            st.info("No statements yet." + (" Upload one below." if is_rm else ""))
+
+        if is_rm:
+            st.markdown("---")
+            st.markdown("### 📁 Upload a statement")
+            customer_map = {
+                f"{c['external_ref']} · {c['full_name']}": c["id"] for c in customers
+            }
+            customer_choice = (
+                st.selectbox("Customer", list(customer_map)) if customer_map else None
+            )
+            uploaded = st.file_uploader("CSV or PDF", type=["csv", "pdf"])
+            if (
+                uploaded is not None
+                and customer_choice
+                and st.button(
+                    "Upload & analyse", type="primary", use_container_width=True
+                )
+            ):
+                try:
+                    with st.spinner("Parsing, masking, categorising, computing…"):
+                        summary = client.upload_statement(
+                            customer_map[customer_choice],
+                            uploaded.name,
+                            uploaded.getvalue(),
+                        )
+                    ss.selected_statement_id = summary["id"]
+                    ss.ai_profile = None
+                    ss.chat_history = []
+                    st.rerun()
+                except ApiError as exc:
+                    st.error(exc.detail)
+            st.markdown("---")
+            if st.button(
+                "🚀 Generate AI Profile",
+                type="primary",
+                use_container_width=True,
+                key="sidebar_gen_btn_api",
+            ):
+                sidebar_generate_clicked = True
+                ss.active_tab = "profiler"
+        st.markdown("---")
+        st.caption(f"API: {settings.banklens_api_url}")
+
+    if not ss.selected_statement_id:
+        st.markdown(
+            "<div class='bl-empty'><h3 class='bl-empty-title'>Pick a statement to begin</h3>"
+            "<p class='bl-empty-sub'>Choose one in the sidebar"
+            + (" or upload a new one." if is_rm else ".")
+            + "</p></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        detail = client.statement(ss.selected_statement_id)
+    except ApiError as exc:
+        st.error(exc.detail)
+        return
+
+    metrics = metrics_from_detail(detail)
+    categorized_df = dataframe_from_detail(detail)
+    tenant = user["tenant"]
+
+    if ss.profile_for != detail["id"]:
+        ss.profile_for = detail["id"]
+        ss.ai_profile = None
+        try:
+            existing = client.latest_profile(detail["id"])
+        except ApiError:
+            existing = None
+        if existing:
+            ss.ai_profile = profile_from_response(existing, tenant)
+
+    def generate_profile():
+        with st.status("Running the AI pipeline on the API…", expanded=True) as status:
+            st.write("retrieve → narrate → validate → store")
+            try:
+                body = client.generate_profile(detail["id"])
+            except ApiError as exc:
+                status.update(label="❌ Profile generation failed", state="error")
+                st.error(exc.detail)
+                return None
+            st.write(
+                f"Model `{body['model']}` · prompt `{body['prompt_version']}` · "
+                f"sources `{body['retrieved_sources']}`"
+                + (" · ⚡ served from cache" if body["from_cache"] else "")
+            )
+            status.update(label="✨ Profile stored", state="complete", expanded=False)
+            return profile_from_response(body, tenant)
+
+    def chat_stream(question: str):
+        history = [
+            {
+                "role": "assistant" if isinstance(m, AIMessage) else "user",
+                "content": m.content,
+            }
+            for m in ss.chat_history
+        ]
+        collected: list[str] = []
+        for token in client.chat(detail["id"], question, history):
+            collected.append(token)
+            yield token
+        ss.chat_history.append(HumanMessage(content=question))
+        ss.chat_history.append(AIMessage(content="".join(collected)))
+
+    st.caption(
+        f"Customer **{detail['customer_name']}** · declared monthly income "
+        f"₹{detail['declared_monthly_income']:,.0f} · statement `{detail['id'][:8]}`"
+    )
+    render_statement_views(
+        metrics,
+        categorized_df,
+        generate_profile=generate_profile,
+        chat_stream=chat_stream,
+        sidebar_generate_clicked=sidebar_generate_clicked,
+        allow_generate=is_rm,
+    )
     render_footer()
 
 
 if __name__ == "__main__":
-    main()
+    if settings.banklens_api_url:
+        main_api()
+    else:
+        main()

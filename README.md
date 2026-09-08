@@ -41,6 +41,65 @@ every push, and a sampled paid layer scores retrieval quality and groundedness.
 
 ---
 
+## Running the platform (Phase 1)
+
+BankLens now runs in two shapes. **Direct mode** is the original single
+process: `streamlit run app/main.py` imports the pipeline and needs only an
+OpenAI key. **Platform mode** is an API with a database, users, roles and
+tenant isolation, and the same Streamlit console as its client.
+
+```
+Streamlit console (RM · Reviewer)   MCP server   REST + SSE API (FastAPI)
+                └──────────────────────┬────────────────────┘
+        JWT · roles (rm, reviewer) · tenant pinned per transaction
+                       Postgres with row-level security
+   tenants · users · customers (declared income) · statements · transactions
+                       statement_metrics · profiles
+```
+
+No Docker needed for local work: an embedded Postgres (pgserver) runs under
+`~/.banklens/pg`.
+
+```bash
+make db        # start the embedded Postgres
+make migrate   # alembic upgrade head
+make seed SEED_STATEMENTS=1   # two synthetic banks, four users, sample statements
+make api       # http://localhost:8000  (docs at /docs)
+make ui        # http://localhost:8501  (console in API mode)
+```
+
+Demo users, password `banklens-demo`: `rm@meridian.example`,
+`reviewer@meridian.example`, `rm@harbor.example`, `reviewer@harbor.example`.
+Meridian Bank has the original ten-product catalogue; Harbor Credit Union has
+its own eight, under `knowledge_base/<tenant>/`. Retrieval, product-name
+validation, the profile cache and the chat tools are all bound to the tenant
+of the signed-in user.
+
+With Docker: `docker compose up --build` starts Postgres, the API (migrating
+and seeding on boot) and the console.
+
+**Isolation is enforced in the database, not in a WHERE clause.** Every
+tenant table has a row-level-security policy on `app.tenant_id`, which the
+API sets inside each transaction. `make prove-isolation` shows it: a
+Meridian statement read as Harbor returns nothing; disable the policy and the
+row leaks; re-enable and it is gone. `tests/test_tenancy.py` holds the same
+proof as tests.
+
+| Endpoint | Role | What it does |
+|---|---|---|
+| `POST /auth/login` | — | tenant + email + password → JWT carrying tenant and role |
+| `GET /customers`, `POST /customers` | any / rm | customers with their declared monthly income |
+| `POST /statements` | rm | upload CSV/PDF → parse, mask PII, categorise, compute metrics, store |
+| `GET /statements`, `GET /statements/{id}` | any | summaries; full metrics + sanitised transactions |
+| `POST /statements/{id}/profile` | rm | retrieve + narrate, stored with model, prompt version and sources |
+| `POST /statements/{id}/chat` | any | tool-calling chat streamed as Server-Sent Events |
+| `GET /health` | — | database check, tenants on disk, version |
+
+Every log line carries a request id (echoed as `x-request-id`), the tenant
+and the user; set `LOG_FORMAT=json` for shippers.
+
+---
+
 ## Architecture
 
 ```

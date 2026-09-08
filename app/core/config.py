@@ -161,6 +161,42 @@ class Settings(BaseSettings):
     vision_ocr_enabled: bool = False
     vision_ocr_max_pages: int = 4
 
+    # ── Platform (Phase 1: service shell, tenancy, auth) ─────────────────────
+    # The API's own database role. Subject to row-level security: every
+    # request runs inside a transaction that sets app.tenant_id, and the
+    # policies filter on it. The URL is SQLAlchemy async (asyncpg driver).
+    database_url: str = ""
+
+    # The owning role, used only by migrations and the seed script. Bypasses
+    # RLS because it owns the tables — never handed to the API process.
+    database_admin_url: str = ""
+
+    # Local development without Docker: an embedded Postgres (pgserver) is
+    # started under this directory by `make db`. Empty URLs above plus a
+    # running local cluster is the zero-install path. Lives under the home
+    # directory because Postgres will not accept a socket path containing a
+    # space, and this project's path has one.
+    local_pg_dir: str = "~/.banklens/pg"
+
+    # HS256 signing secret for access tokens. The default is for local demos
+    # only; the API refuses to start with it when BANKLENS_ENV=production.
+    jwt_secret: str = "dev-only-change-me-before-any-real-deployment"
+    jwt_expire_minutes: int = 480
+    banklens_env: str = "development"
+
+    # Tenant used when nothing sets one: the Streamlit direct mode, the MCP
+    # server's default, the eval harness, and the tests.
+    default_tenant: str = "meridian"
+
+    # When set, the Streamlit UI talks to the API instead of importing the
+    # pipeline directly. Empty keeps today's single-process behaviour, which
+    # is what production runs until the platform is deployed.
+    banklens_api_url: str = ""
+
+    # "text" for humans, "json" for log shippers. Either way every line
+    # carries request_id, tenant and user when they are in scope.
+    log_format: str = "text"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

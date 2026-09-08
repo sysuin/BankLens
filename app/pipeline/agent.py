@@ -25,9 +25,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
+from app.core.context import current_tenant, tenant_scope
 from app.core.logger import get_logger
 from app.pipeline.analyzer import FinancialMetrics, RiskProfile
-from app.pipeline.rag import KNOWLEDGE_BASE_DIR
+from app.pipeline.rag import kb_dir
 
 logger = get_logger(__name__)
 
@@ -67,19 +68,29 @@ def _tokenize(text: str) -> set[str]:
     return tokens
 
 
-@lru_cache(maxsize=1)
-def get_product_catalogue() -> dict[str, tuple[frozenset[str], ...]]:
+def get_product_catalogue(
+    tenant: str | None = None,
+) -> dict[str, tuple[frozenset[str], ...]]:
     """
-    Build {knowledge base filename: (alias token sets,)} from disk.
+    Build {knowledge base filename: (alias token sets,)} for a tenant.
+
+    Resolved against the tenant in scope when none is given, so the Pydantic
+    validators below — which cannot take arguments — still check the right
+    bank's catalogue: build_profile() puts the tenant in scope before parsing.
 
     Each product contributes two aliases — its filename stem and its markdown
     H1 title — because the LLM may echo either ("mutual_funds_sip.md" is titled
     "Systematic Investment Plan (SIP) & Wealth Mutual Funds", and both phrasings
     are legitimate).
     """
+    return _catalogue_for(tenant or current_tenant())
+
+
+@lru_cache(maxsize=16)
+def _catalogue_for(tenant: str) -> dict[str, tuple[frozenset[str], ...]]:
     catalogue: dict[str, tuple[frozenset[str], ...]] = {}
 
-    for md_file in sorted(KNOWLEDGE_BASE_DIR.glob("*.md")):
+    for md_file in sorted(kb_dir(tenant).glob("*.md")):
         aliases = [frozenset(_tokenize(md_file.stem.replace("_", " ")))]
 
         first_line = md_file.read_text(encoding="utf-8").splitlines()[0]
@@ -91,7 +102,7 @@ def get_product_catalogue() -> dict[str, tuple[frozenset[str], ...]]:
     return catalogue
 
 
-def resolve_product(name: str) -> str | None:
+def resolve_product(name: str, tenant: str | None = None) -> str | None:
     """
     Map a proposed product name onto a knowledge base file, or None.
 
@@ -117,7 +128,7 @@ def resolve_product(name: str) -> str | None:
     # "Systematic Investment Plan" still resolves against a longer alias.
     best_file, best_rank = None, (0.0, 0.0)
 
-    for filename, aliases in get_product_catalogue().items():
+    for filename, aliases in get_product_catalogue(tenant).items():
         for alias in aliases:
             shared = len(alias & candidate)
             if not shared:
@@ -246,8 +257,20 @@ class CustomerProfile(ProfileNarrative):
 def build_profile(
     metrics: FinancialMetrics,
     retrieved_chunks: list[dict],
+    tenant: str | None = None,
 ) -> CustomerProfile:
-    """Generate a structured CustomerProfile using GPT-4o, prompt injection defense, and RAG context."""
+    """
+    Generate a structured CustomerProfile using GPT-4o, prompt injection
+    defense, and RAG context, validated against the tenant's catalogue.
+    """
+    with tenant_scope(tenant or current_tenant()):
+        return _build_profile(metrics, retrieved_chunks)
+
+
+def _build_profile(
+    metrics: FinancialMetrics,
+    retrieved_chunks: list[dict],
+) -> CustomerProfile:
     if not SYSTEM_PROMPT_PATH.exists():
         raise FileNotFoundError(f"System prompt not found at: {SYSTEM_PROMPT_PATH}")
 

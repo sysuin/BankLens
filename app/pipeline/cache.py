@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.context import current_tenant, tenant_scope
 from app.core.logger import get_logger
 from app.pipeline.agent import SYSTEM_PROMPT_PATH, CustomerProfile, build_profile
 from app.pipeline.analyzer import FinancialMetrics
@@ -30,9 +31,14 @@ from app.pipeline.analyzer import FinancialMetrics
 logger = get_logger(__name__)
 
 
-def profile_cache_key(metrics: FinancialMetrics, retrieved_chunks: list[dict]) -> str:
+def profile_cache_key(
+    metrics: FinancialMetrics, retrieved_chunks: list[dict], tenant: str | None = None
+) -> str:
     """Hash every input that determines the generated profile."""
     digest = hashlib.sha256()
+    # The tenant is part of the key: two banks can retrieve identical text
+    # and still must never share a cached recommendation.
+    digest.update((tenant or current_tenant()).encode("utf-8"))
     digest.update(metrics.model_dump_json().encode("utf-8"))
     for chunk in retrieved_chunks:
         digest.update(chunk["source"].encode("utf-8"))
@@ -78,7 +84,9 @@ def write_cached_profile(key: str, profile: CustomerProfile) -> None:
 
 
 def cached_build_profile(
-    metrics: FinancialMetrics, retrieved_chunks: list[dict]
+    metrics: FinancialMetrics,
+    retrieved_chunks: list[dict],
+    tenant: str | None = None,
 ) -> tuple[CustomerProfile, bool]:
     """
     build_profile with an exact-key response cache in front.
@@ -87,16 +95,20 @@ def cached_build_profile(
         (profile, from_cache) — the flag lets the UI say a result was cached
         rather than silently pretending a fresh generation happened.
     """
+    resolved = tenant or current_tenant()
     if not settings.profile_cache_enabled:
-        return build_profile(metrics, retrieved_chunks), False
+        return build_profile(metrics, retrieved_chunks, tenant=resolved), False
 
-    key = profile_cache_key(metrics, retrieved_chunks)
-    cached = read_cached_profile(key)
+    key = profile_cache_key(metrics, retrieved_chunks, resolved)
+    # Validation of a cached profile checks product names against the
+    # tenant's catalogue, so the tenant must be in scope while reading.
+    with tenant_scope(resolved):
+        cached = read_cached_profile(key)
     if cached is not None:
         logger.info("Profile cache HIT (%s…) — skipping LLM call.", key[:12])
         return cached, True
 
-    profile = build_profile(metrics, retrieved_chunks)
+    profile = build_profile(metrics, retrieved_chunks, tenant=resolved)
     write_cached_profile(key, profile)
     logger.info("Profile cache MISS (%s…) — generated and stored.", key[:12])
     return profile, False

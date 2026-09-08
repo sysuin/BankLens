@@ -102,7 +102,7 @@ class TestCachedBuildProfile:
         monkeypatch.setattr(settings, "profile_cache_enabled", True)
         calls = {"n": 0}
 
-        def fake_build(metrics, chunks):
+        def fake_build(metrics, chunks, tenant=None):
             calls["n"] += 1
             return _profile()
 
@@ -119,7 +119,7 @@ class TestCachedBuildProfile:
         monkeypatch.setattr(settings, "profile_cache_enabled", False)
         calls = {"n": 0}
 
-        def fake_build(metrics, chunks):
+        def fake_build(metrics, chunks, tenant=None):
             calls["n"] += 1
             return _profile()
 

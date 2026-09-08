@@ -10,6 +10,8 @@ exclude =
     .git,
     __pycache__,
     .venv,
+    .venv311,
+    .pg,
     venv,
     build,
     dist,

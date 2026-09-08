@@ -1,33 +1,77 @@
-# BankLens — Local Development with Docker Compose
+# BankLens Platform — local stack with Docker Compose
 #
-# Usage:
-#   docker-compose up --build      # Build image and start the app
-#   docker-compose up              # Start the app (no rebuild)
-#   docker-compose down            # Stop the app
+#   docker compose up --build          postgres + api + console
+#   docker compose run --rm api python -m alembic upgrade head
+#   docker compose run --rm api python -m app.db.seed --with-statements
 #
-# Prerequisites:
-#   - Copy .env.example to .env and fill in your OPENAI_API_KEY
+# Prerequisites: copy .env.example to .env and set OPENAI_API_KEY.
+#
+# Without Docker, the same stack runs from the Makefile:
+#   make db && make migrate && make seed && make api    (then, in another shell) make ui
 
 services:
-  banklens:
+  postgres:
+    image: postgres:16
+    container_name: banklens_postgres
+    environment:
+      POSTGRES_DB: banklens
+      POSTGRES_USER: banklens_owner
+      POSTGRES_PASSWORD: banklens_owner
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates the RLS-restricted API role on first start.
+      - ./deploy/db-init.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banklens_owner -d banklens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: banklens_app
-
-    # Load environment variables from the .env file
+    container_name: banklens_api
     env_file:
       - .env
-
+    environment:
+      DATABASE_URL: postgresql+asyncpg://banklens_app:banklens_app@postgres:5432/banklens
+      DATABASE_ADMIN_URL: postgresql+asyncpg://banklens_owner:banklens_owner@postgres:5432/banklens
+      LOG_FORMAT: json
+    command: >
+      sh -c "python -m alembic upgrade head
+             && python -m app.db.seed
+             && uvicorn app.api.app:app --host 0.0.0.0 --port 8000"
     ports:
-      # Map container port 8501 to host port 8501
-      - "8501:8501"
-
+      - "8000:8000"
     volumes:
-      # Persist the ChromaDB vector store between container restarts.
-      # Without this mount, the knowledge base is re-embedded every time
-      # the container starts, which wastes time and API credits.
+      # Persist the per-tenant Chroma indexes between restarts.
       - ./chroma_db:/app/chroma_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
-    # Restart the container automatically unless it is explicitly stopped
-    restart: unless-stopped
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: banklens_console
+    env_file:
+      - .env
+    environment:
+      BANKLENS_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

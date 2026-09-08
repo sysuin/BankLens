@@ -19,14 +19,20 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **309 passed** in 15 files, 24 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | | `wc -l` |
 | Tokens saved by cache | n/a (measured in Phase 4) | | |
 | Guardrail block rate | n/a (suite built in Phase 5) | | |
 | Bulk throughput and cost | n/a (Phase 4) | | |
-| Tenant isolation test | n/a (Phase 1) | | |
+| Tenant isolation test | n/a | **7 tests in `tests/test_tenancy.py` + `make prove-isolation` (RLS on → nothing; RLS off → row leaks; on → nothing)** | `make prove-isolation` |
 | Local-model golden pass rate | n/a (Phase 4) | | |
 | Minutes saved per statement | ~20 min manual (assumption, `docs/discovery.md`) | | |
+
+## Phase 1 findings (2026-09-08)
+
+- The API adds ~3 ms per read (`GET /statements` served in 3 ms from Postgres); upload of a 120-line CSV including parse, mask, categorise, compute and store ran in under 200 ms. The profile call is unchanged at ~16 s wall time, all of it the model.
+- **Harbor grounding gap.** The first real Harbor profile recommended *Term Deposit* and *High-Yield Savings Account* (both valid Harbor products, validated by the tenant-aware catalogue) while retrieval had surfaced `auto_loan.md`, `cashback_credit_card.md`, `everyday_chequing.md`. Meridian's golden set does not cover Harbor; `retrieval_supports_recommendation` would have flagged this. The retrieval query and the golden set need per-tenant variants (Phase 5/6 backlog).
+- The categorizer still needed no LLM call for any seeded statement.
 
 ## Caveats I say out loud
 

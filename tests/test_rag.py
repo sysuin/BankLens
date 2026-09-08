@@ -189,12 +189,18 @@ class TestBuildVectorStoreFreshness:
     """
 
     def _persisted_dir(self, tmp_path):
-        """A directory that looks like an existing persisted index."""
-        (tmp_path / "chroma.sqlite3").write_text("not empty", encoding="utf-8")
-        return tmp_path
+        """A directory that looks like an existing persisted index.
 
-    def _run(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(rag.settings, "chroma_persist_dir", str(tmp_path))
+        Indexes live under <chroma_persist_dir>/<tenant>/, so the fake index
+        goes in the default tenant's subdirectory.
+        """
+        persist = tmp_path / rag.settings.default_tenant
+        persist.mkdir()
+        (persist / "chroma.sqlite3").write_text("not empty", encoding="utf-8")
+        return persist
+
+    def _run(self, persist, monkeypatch):
+        monkeypatch.setattr(rag.settings, "chroma_persist_dir", str(persist.parent))
 
         with (
             patch.object(rag, "OpenAIEmbeddings"),
