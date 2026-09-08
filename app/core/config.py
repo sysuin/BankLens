@@ -249,6 +249,14 @@ class Settings(BaseSettings):
     # below the floor the assistant abstains without calling a model.
     guardrail_scope_floor: float = 0.50
 
+    # ── Warehouse (Phase 6) ──────────────────────────────────────────────────
+    # The chat's numeric questions run as a separate database role that can
+    # read only tenant-filtered views. Empty = the embedded local cluster.
+    database_chat_url: str = ""
+    # Intent router: below this confidence a question is not treated as a
+    # numeric question and goes to the tool-calling chat instead.
+    warehouse_intent_floor: float = 0.35
+
     # "text" for humans, "json" for log shippers. Either way every line
     # carries request_id, tenant and user when they are in scope.
     log_format: str = "text"

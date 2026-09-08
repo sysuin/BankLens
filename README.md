@@ -101,6 +101,7 @@ proof as tests.
 | `POST /statements/{id}/run` | rm | run the **decision graph** (SSE): verify income → pause for review if needed → retrieve → narrate → guardrails → store |
 | `GET /statements/{id}/runs`, `GET /statements/{id}/audit` | any | runs and the append-only audit trail for a statement |
 | `GET /reviews`, `POST /reviews/{id}` | any / reviewer | the review queue; approve or reject resumes the checkpointed run (SSE) |
+| `GET /warehouse/templates`, `POST /warehouse/query`, `GET /warehouse/query-log` | any (role-checked per template) | vetted SQL templates over tenant-filtered views, and what ran |
 
 Every log line carries a request id (echoed as `x-request-id`), the tenant
 and the user; set `LOG_FORMAT=json` for shippers.
@@ -239,6 +240,37 @@ false positives on benign      0.0%   (ceiling 5%)
 Benign cases include merchants like "Ignore Fashion Store" and "Override Auto
 Parts", because a guard that blocks those is as broken as one that lets an
 override through. The suite runs in CI on every push.
+
+### The warehouse: governed numbers, vetted SQL (Phase 6)
+
+The chat never writes SQL. `app/warehouse/semantic_layer.yaml` defines every
+metric once (view, expression, unit, how it is computed) and ten **templates**
+with named bind parameters, trigger phrases and a role allow-list. Loading the
+file validates every template against the SQL guard, so an unsafe template
+stops the process at startup, not a customer's question.
+
+- **Views, not tables.** Templates run as `banklens_chat`, a database role
+  that can SELECT only from four views whose definitions carry the tenant
+  predicate. It holds no privilege on any base table: a crafted question that
+  reached SQL could not see another bank, or anything the views do not expose.
+- **Intent router.** Deterministic trigger matching with a confidence floor.
+  Above it, the question is answered from the rows (the numbers come from
+  code; a model is never called); below it, the tool-calling chat answers.
+  A role that may not run a matched template is refused and the refusal is
+  audited: an RM asking for "pending reviews" gets "reserved for reviewer".
+- **Query log.** Every run writes template name, parameters, role, actor,
+  rows and duration, so "what did the chat query?" is a table. The console
+  shows it next to the list of questions the numbers can answer.
+
+```
+[rm]       What is the savings rate?                 → template savings_rate, 1 row, 11 ms, no model
+[rm]       top 3 categories                          → template top_categories, 3 rows, 5 ms
+[rm]       show me the pending reviews               → denied: reserved for reviewer (audited)
+[reviewer] how many approved vs rejected?            → template decisions_by_status, 2 rows, 2 ms
+```
+
+`GET /warehouse/templates`, `/warehouse/metrics`, `/warehouse/query-log` and
+`POST /warehouse/query` expose the same layer to the console and to scripts.
 
 **Bulk work.** `POST /jobs` enqueues a statement (kind `ingest` or
 `ingest_and_run`); `python -m app.worker` claims jobs with

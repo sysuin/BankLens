@@ -164,7 +164,9 @@ def test_chat_streams_server_sent_events(client, meridian_rm):
             f"/statements/{summary['id']}/chat",
             headers=meridian_rm,
             json={
-                "question": "savings rate?",
+                # A product question: numeric ones are answered from the
+                # warehouse without a model (see tests/test_warehouse.py).
+                "question": "which product suits this customer?",
                 "history": [{"role": "user", "content": "hi"}],
             },
         ) as response:

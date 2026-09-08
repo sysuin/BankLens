@@ -141,6 +141,12 @@ class BankLensClient:
     def gateway(self) -> dict:
         return self._get("/platform/gateway")
 
+    def warehouse_templates(self) -> list[dict]:
+        return self._get("/warehouse/templates")
+
+    def query_log(self, limit: int = 50) -> list[dict]:
+        return self._get(f"/warehouse/query-log?limit={limit}")
+
     def jobs_summary(self) -> dict:
         return self._get("/jobs/summary")
 
@@ -185,6 +191,14 @@ class BankLensClient:
                             "🛡️ blocked" if event == "blocked" else "🤷 out of scope"
                         )
                         yield f"*{label}: {data.get('reason', event)}*  \n"
+                    elif event == "template":
+                        yield (
+                            f"*📊 from the warehouse: template `{data.get('template')}`, "
+                            f"{data.get('rows')} row(s), {data.get('duration_ms')} ms, "
+                            f"no model call*  \n\n"
+                        )
+                    elif event == "denied":
+                        yield f"*🔒 reserved for {', '.join(data.get('roles', []))}*  \n"
                     elif event == "error":
                         raise ApiError(500, data)
                     # "done" carries the full answer; tokens already covered it.

@@ -540,6 +540,27 @@ class ProfileCacheEntry(Base):
     )
 
 
+class QueryLog(TenantScoped, Base):
+    """Every warehouse query the chat ran: template name and parameters, never SQL text."""
+
+    __tablename__ = "query_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    template: Mapped[str] = mapped_column(String(64), nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    actor: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    rows: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    question_hash: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # Tables whose rows are tenant-owned and therefore carry an RLS policy.
 TENANT_TABLES = (
     "users",
@@ -554,4 +575,5 @@ TENANT_TABLES = (
     "spans",
     "jobs",
     "profile_cache",
+    "query_log",
 )

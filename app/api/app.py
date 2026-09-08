@@ -18,7 +18,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, customers, health, jobs, reviews, statements, traces
+from app.api.routes import (
+    auth,
+    customers,
+    health,
+    jobs,
+    reviews,
+    statements,
+    traces,
+    warehouse,
+)
 from app.api.security import assert_secret_is_safe_for
 from app.core import context
 from app.core.config import settings
@@ -34,8 +43,11 @@ async def lifespan(_: FastAPI):
     assert_secret_is_safe_for(settings.banklens_env)
     setup_tracing()
     from app.platform import gateway
+    from app.warehouse.semantic import load_layer
 
     gateway.enable_budgets()
+    # Fail fast: an unsafe template must stop the process, not a question.
+    load_layer()
     logger.info(
         "BankLens API starting env=%s default_tenant=%s",
         settings.banklens_env,
@@ -118,6 +130,7 @@ def create_app() -> FastAPI:
     application.include_router(reviews.router)
     application.include_router(traces.router)
     application.include_router(jobs.router)
+    application.include_router(warehouse.router)
     return application
 
 

@@ -215,11 +215,15 @@ async def chat(
     loop = asyncio.get_running_loop()
     tenant = principal.tenant
 
-    # Guardrails before any model: injection, then scope, then PII redaction.
+    # Guardrails before any model. Injection is checked first; the intent
+    # router decides next; the scope gate applies only to what reaches the
+    # tool-calling chat, because a vetted template is in scope by definition.
     from app.graph import audit
     from app.platform.guardrails import guard_chat_question
 
-    guard = guard_chat_question(body.question, tenant)
+    # Injection only at this stage: the raw question is kept for routing and
+    # for the scope gate, which must judge the words the user typed.
+    guard = guard_chat_question(body.question, tenant, check_scope=False)
     if not guard.allowed:
         message = (
             "I can't act on instructions embedded in a question. Ask about this "
@@ -246,6 +250,126 @@ async def chat(
 
         return StreamingResponse(
             refused(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    question = body.question  # raw: routing and the scope gate judge the user's words
+    # Numbers come from the warehouse, not from a model. The router picks a
+    # vetted template by intent; a role that may not run it is refused and
+    # the refusal is recorded. Anything else goes to the tool-calling chat.
+    from app.warehouse import query as wq
+    from app.warehouse.router import route
+
+    categories = (
+        sorted(str(c) for c in df["category"].dropna().unique())
+        if "category" in df.columns
+        else []
+    )
+    routed = route(
+        question,
+        role=principal.role,
+        statement_id=str(statement_id),
+        categories=categories,
+    )
+    if routed.kind == "denied":
+        await audit.record(
+            principal.tenant_id,
+            statement_id=statement_id,
+            node="warehouse.route",
+            event="denied",
+            actor=principal.email,
+            payload={
+                "template": routed.template.name,
+                "role": principal.role,
+                "confidence": routed.confidence,
+            },
+        )
+        message = (
+            f"That question is answered by the '{routed.template.name}' query, "
+            f"which is reserved for {', '.join(sorted(routed.template.roles))} "
+            "users. Ask a reviewer, or ask about this customer's statement."
+        )
+
+        async def denied() -> AsyncIterator[str]:
+            yield f"event: denied\ndata: {json.dumps({'template': routed.template.name, 'roles': sorted(routed.template.roles)})}\n\n"
+            yield f"event: token\ndata: {json.dumps(message)}\n\n"
+            yield f"event: done\ndata: {json.dumps(message)}\n\n"
+
+        return StreamingResponse(
+            denied(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    if routed.kind == "template":
+        try:
+            result = await wq.run_template(
+                routed.template.name,
+                tenant_id=principal.tenant_id,
+                role=principal.role,
+                actor=principal.email,
+                params=routed.params,
+                question=question,
+            )
+        except (ValueError, wq.TemplateNotAllowed) as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        answer = wq.format_answer(result)
+        await audit.record(
+            principal.tenant_id,
+            statement_id=statement_id,
+            node="warehouse.route",
+            event="template",
+            actor=principal.email,
+            payload={
+                "template": result.template,
+                "params": {
+                    k: v for k, v in result.params.items() if k != "statement_id"
+                },
+                "rows": len(result.rows),
+                "confidence": routed.confidence,
+                "duration_ms": result.duration_ms,
+            },
+        )
+
+        async def from_warehouse() -> AsyncIterator[str]:
+            meta = {
+                "template": result.template,
+                "rows": len(result.rows),
+                "confidence": routed.confidence,
+                "duration_ms": result.duration_ms,
+            }
+            yield f"event: template\ndata: {json.dumps(meta)}\n\n"
+            yield f"event: token\ndata: {json.dumps(answer)}\n\n"
+            yield f"event: done\ndata: {json.dumps(answer)}\n\n"
+
+        return StreamingResponse(
+            from_warehouse(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Not a template question: the scope gate and PII redaction apply.
+    guard = guard_chat_question(body.question, tenant)
+    if not guard.allowed:
+        await audit.record(
+            principal.tenant_id,
+            statement_id=statement_id,
+            node="guardrail.chat",
+            event="abstained",
+            actor=principal.email,
+            payload={"reason": guard.reason, **guard.detail},
+        )
+        message = (
+            "That is outside what I can see. I can answer questions about this "
+            "customer's statement and this bank's products."
+        )
+
+        async def abstained() -> AsyncIterator[str]:
+            yield f"event: abstained\ndata: {json.dumps({'reason': guard.reason, **guard.detail})}\n\n"
+            yield f"event: token\ndata: {json.dumps(message)}\n\n"
+            yield f"event: done\ndata: {json.dumps(message)}\n\n"
+
+        return StreamingResponse(
+            abstained(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

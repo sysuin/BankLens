@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 
 _app_engine: AsyncEngine | None = None
 _admin_engine: AsyncEngine | None = None
+_chat_engine: AsyncEngine | None = None
 
 
 def _resolve_urls() -> tuple[str, str]:
@@ -63,6 +64,20 @@ def app_engine() -> AsyncEngine:
     return _app_engine
 
 
+def chat_engine() -> AsyncEngine:
+    """The read-only warehouse role: tenant-filtered views only."""
+    global _chat_engine
+    if _chat_engine is None:
+        url = settings.database_chat_url
+        if not url:
+            from app.db.local import ensure_local_cluster, local_chat_url
+
+            ensure_local_cluster()
+            url = local_chat_url()
+        _chat_engine = create_async_engine(url, pool_pre_ping=True, pool_size=3)
+    return _chat_engine
+
+
 def admin_engine() -> AsyncEngine:
     global _admin_engine
     if _admin_engine is None:
@@ -80,16 +95,16 @@ def reset_engines() -> None:
     bound to the loop that created them, so the next caller must build new
     engines rather than reuse these.
     """
-    global _app_engine, _admin_engine
-    _app_engine = _admin_engine = None
+    global _app_engine, _admin_engine, _chat_engine
+    _app_engine = _admin_engine = _chat_engine = None
 
 
 async def dispose_engines() -> None:
-    global _app_engine, _admin_engine
-    for engine in (_app_engine, _admin_engine):
+    global _app_engine, _admin_engine, _chat_engine
+    for engine in (_app_engine, _admin_engine, _chat_engine):
         if engine is not None:
             await engine.dispose()
-    _app_engine = _admin_engine = None
+    _app_engine = _admin_engine = _chat_engine = None
 
 
 def _sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

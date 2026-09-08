@@ -39,6 +39,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://banklens_app:banklens_app@postgres:5432/banklens
       DATABASE_ADMIN_URL: postgresql+asyncpg://banklens_owner:banklens_owner@postgres:5432/banklens
+      DATABASE_CHAT_URL: postgresql+asyncpg://banklens_chat:banklens_chat@postgres:5432/banklens
       LOG_FORMAT: json
       # Spans always land in the spans table; this also ships them to Jaeger.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318

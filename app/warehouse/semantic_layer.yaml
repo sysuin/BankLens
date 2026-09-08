@@ -1,0 +1,205 @@
+# BankLens semantic layer.
+#
+# Every number the chat can quote is defined here once: which view it comes
+# from, how it is computed, and who may ask for it. The chat never writes
+# SQL. It picks a template by intent, binds parameters, and runs it as a
+# read-only database role that can see only the tenant-filtered views
+# listed under `relations`. Every template is validated against the SQL
+# allow-list at import time, so an unsafe template fails the process start,
+# not a customer's question.
+
+relations:
+  - v_customers
+  - v_statement_metrics
+  - v_transactions
+  - v_decisions
+
+metrics:
+  total_income:
+    view: v_statement_metrics
+    expression: total_income
+    unit: currency
+    description: Sum of credit transactions in the statement period, computed in analyzer.py.
+  total_expenses:
+    view: v_statement_metrics
+    expression: total_expenses
+    unit: currency
+    description: Sum of debit transactions excluding internal savings transfers.
+  savings_rate_pct:
+    view: v_statement_metrics
+    expression: savings_rate_pct
+    unit: percent
+    description: (income - expenses) / income * 100. The risk band derives from it.
+  expense_to_income_ratio:
+    view: v_statement_metrics
+    expression: expense_to_income_ratio
+    unit: ratio
+    description: expenses / income.
+  risk_band:
+    view: v_statement_metrics
+    expression: risk_band
+    unit: label
+    description: Low / Medium / High, from savings rate thresholds in analyzer.py. Never set by a model.
+  health_score:
+    view: v_statement_metrics
+    expression: health_score
+    unit: score
+    description: 0 to 100, from the savings rate, computed in analyzer.py.
+  observed_monthly_income:
+    view: v_decisions
+    expression: observed_monthly_income
+    unit: currency
+    description: total_income divided by the months the statement covers.
+  discrepancy_pct:
+    view: v_decisions
+    expression: discrepancy_pct
+    unit: percent
+    description: abs(observed - declared) / declared * 100; above the threshold a reviewer decides.
+
+# Templates: `sql` uses named bind parameters only. `roles` is the allow-list.
+# `triggers` are phrases the intent router matches; `params` declares what
+# the router must extract (statement_id is always supplied by the API).
+templates:
+  savings_rate:
+    roles: [rm, reviewer]
+    description: Savings rate, income, expenses and the risk band for this statement.
+    triggers: [savings rate, saving rate, how much saved, savings, rate of saving]
+    params: [statement_id]
+    sql: |
+      SELECT total_income, total_expenses, savings_rate_pct, expense_to_income_ratio,
+             risk_band, health_score
+      FROM v_statement_metrics
+      WHERE statement_id = :statement_id
+      LIMIT 1
+    answer: |
+      Income {total_income:,.0f}, expenses {total_expenses:,.0f}, savings rate
+      {savings_rate_pct:.1f}% (expense-to-income {expense_to_income_ratio:.2f}).
+      Risk band {risk_band}, health score {health_score}. All computed in code.
+
+  income_vs_expenses:
+    roles: [rm, reviewer]
+    description: Income, expenses and the essential vs discretionary split.
+    triggers: [income, expenses, spend in total, total spending, earn, essential, discretionary, deficit, surplus]
+    params: [statement_id]
+    sql: |
+      SELECT total_income, total_expenses, essential_expenses, discretionary_expenses,
+             is_cashflow_negative
+      FROM v_statement_metrics
+      WHERE statement_id = :statement_id
+      LIMIT 1
+    answer: |
+      Income {total_income:,.0f} against expenses {total_expenses:,.0f}
+      (essential {essential_expenses:,.0f}, discretionary {discretionary_expenses:,.0f}).
+      Cash-flow negative: {is_cashflow_negative}.
+
+  risk_band:
+    roles: [rm, reviewer]
+    description: The computed risk band and health score, and the savings rate behind them.
+    triggers: [risk, rated, rating, health score, why high, why low, why medium]
+    params: [statement_id]
+    sql: |
+      SELECT risk_band, health_score, savings_rate_pct
+      FROM v_statement_metrics
+      WHERE statement_id = :statement_id
+      LIMIT 1
+    answer: |
+      Risk band {risk_band} with health score {health_score}: both derive from the
+      savings rate of {savings_rate_pct:.1f}% through fixed thresholds in analyzer.py,
+      never from a model.
+
+  top_categories:
+    roles: [rm, reviewer]
+    description: Spending by category, largest first.
+    triggers: [top categories, biggest categories, largest categories, expense categories, spending categories, spending by category, where does the money go, breakdown, category breakdown]
+    params: [statement_id, limit]
+    sql: |
+      SELECT category, SUM(amount) AS total_spent, COUNT(*) AS transactions
+      FROM v_transactions
+      WHERE statement_id = :statement_id AND lower(txn_type) = 'debit'
+      GROUP BY category
+      ORDER BY total_spent DESC
+      LIMIT :limit
+    answer: table
+
+  category_spend:
+    roles: [rm, reviewer]
+    description: Total and the largest transactions in one category.
+    triggers: [spend on, spent on, spending on, how much on, paid for]
+    params: [statement_id, category, limit]
+    sql: |
+      SELECT txn_date, description, amount
+      FROM v_transactions
+      WHERE statement_id = :statement_id AND lower(txn_type) = 'debit'
+        AND lower(category) = lower(:category)
+      ORDER BY amount DESC
+      LIMIT :limit
+    answer: table
+
+  declared_vs_observed:
+    roles: [rm, reviewer]
+    description: Declared income at onboarding against income observed in the statement.
+    triggers: [declared, observed, discrepancy, income verification, verify income, mismatch]
+    params: [statement_id]
+    sql: |
+      SELECT declared_monthly_income, observed_monthly_income, discrepancy_pct,
+             threshold_pct, status, decided_by, note
+      FROM v_decisions
+      WHERE statement_id = :statement_id
+      ORDER BY created_at DESC
+      LIMIT 1
+    answer: |
+      Declared {declared_monthly_income:,.0f} per month, observed
+      {observed_monthly_income:,.0f}: a {discrepancy_pct:.1f}% discrepancy against a
+      {threshold_pct:.0f}% threshold. Decision status: {status}.
+
+  customer_statements:
+    roles: [rm, reviewer]
+    description: Every analysed statement for this bank, newest first.
+    triggers: [all statements, list statements, which statements, statements analysed, recent statements]
+    params: [limit]
+    sql: |
+      SELECT external_ref, full_name, period, risk_band, savings_rate_pct, status
+      FROM v_statement_metrics
+      ORDER BY created_at DESC
+      LIMIT :limit
+    answer: table
+
+  pending_reviews:
+    roles: [reviewer]
+    description: Income-verification decisions waiting for a reviewer.
+    triggers: [pending reviews, review queue, waiting for review, pending decisions, what needs review, awaiting review]
+    params: [limit]
+    sql: |
+      SELECT external_ref, full_name, declared_monthly_income, observed_monthly_income,
+             discrepancy_pct, created_at
+      FROM v_decisions
+      WHERE status = 'pending'
+      ORDER BY created_at
+      LIMIT :limit
+    answer: table
+
+  decisions_by_status:
+    roles: [reviewer]
+    description: How many decisions ended in each status.
+    triggers: [decisions by status, approval rate, how many approved, how many rejected, decision counts, auto cleared]
+    params: [limit]
+    sql: |
+      SELECT status, COUNT(*) AS decisions, AVG(discrepancy_pct) AS avg_discrepancy_pct
+      FROM v_decisions
+      GROUP BY status
+      ORDER BY decisions DESC
+      LIMIT :limit
+    answer: table
+
+  decisions_by_reviewer:
+    roles: [reviewer]
+    description: Who decided what, with notes.
+    triggers: [who approved, who rejected, decided by, reviewer decisions, decisions with notes, recent decisions]
+    params: [limit]
+    sql: |
+      SELECT external_ref, status, decided_by, note, decided_at
+      FROM v_decisions
+      WHERE decided_at IS NOT NULL
+      ORDER BY decided_at DESC
+      LIMIT :limit
+    answer: table

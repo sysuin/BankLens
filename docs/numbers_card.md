@@ -19,7 +19,7 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **373 passed** in 19 files, 61 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **392 passed** in 20 files, 73 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a | **100 % of 43 attacks blocked, 0 % false positives on 37 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
@@ -77,6 +77,15 @@ What the table says, said out loud: the 3B local model passes every **blocking**
 - **First run of the suite scored 90.2 %.** Five misses: a base64 blob (word-boundary bug against `=` padding), "run the SQL query: delete…" (tool-abuse weight too low), "all customers data from other banks" (cross-tenant weight too low), "capital of Australia" (exactly half finance vocabulary; floor made strict), and a CTE-based SELECT wrongly rejected. All fixed; the suite is now 100 % / 0 %.
 - **A side effect caught by the trace.** Neutralised rows were being sent to the categorizer's model fallback (`pipeline.llm_fallback_rows: 2`). They now stay "Others" without a call.
 - Categories of neutralised rows fall to "Others", so the essential/discretionary split can move; amounts, dates, income and the risk band do not.
+
+## Phase 6 findings (2026-09-08)
+
+- **Numeric questions cost nothing and take milliseconds.** Live: savings rate 11 ms, top categories 5 ms, decisions by status 2 ms, all as `banklens_chat` over views, no model call. The same questions used to be a tool-calling turn on gpt-4o (about 5 s and a cent).
+- **Deny on base tables, proved.** As the chat role, `SELECT count(*) FROM statements` fails with permission denied; `SELECT … FROM v_customers` with the tenant pinned returns that bank only; unpinned it returns nothing.
+- **Role denial is a recorded event.** An RM asking "show me the pending reviews" gets a refusal naming the template and the role it is reserved for; the audit trail has `warehouse.route / denied`; the query log has no row, because nothing ran.
+- **Two router bugs found by the tests.** A digit inside a trigger phrase ("top 3 categories") missed, and a single-word trigger outscored a three-word match. Fixed by dropping digits before matching and scoring every matching trigger.
+- **Order matters.** The scope gate must judge the user's words, not the redaction markers: "account 123…" became "[REDACTED_PHONE]" and the gate counted the marker as unknown. Injection → router → scope is the order now.
+- Ten templates, eight metrics, four views; every template validated against the SQL allow-list at import.
 
 ## Caveats I say out loud
 

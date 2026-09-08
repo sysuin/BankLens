@@ -19,6 +19,7 @@ from pathlib import Path
 from app.core.config import settings
 
 APP_ROLE = "banklens_app"
+CHAT_ROLE = "banklens_chat"
 ADMIN_ROLE = "postgres"
 DB_NAME = "banklens"
 
@@ -71,12 +72,18 @@ def ensure_local_cluster(directory: Path | None = None, *, persistent: bool = Tr
         ).fetchone()
         if not has_role:
             conn.execute(f"CREATE ROLE {APP_ROLE} LOGIN")
+        has_chat = conn.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname = %s", (CHAT_ROLE,)
+        ).fetchone()
+        if not has_chat:
+            conn.execute(f"CREATE ROLE {CHAT_ROLE} LOGIN NOINHERIT")
         has_db = conn.execute(
             "SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,)
         ).fetchone()
         if not has_db:
             conn.execute(f"CREATE DATABASE {DB_NAME} OWNER {ADMIN_ROLE}")
             conn.execute(f"GRANT CONNECT ON DATABASE {DB_NAME} TO {APP_ROLE}")
+            conn.execute(f"GRANT CONNECT ON DATABASE {DB_NAME} TO {CHAT_ROLE}")
     return server
 
 
@@ -90,6 +97,12 @@ def local_urls(directory: Path | None = None) -> tuple[str, str]:
     app = f"postgresql+asyncpg://{APP_ROLE}@/{DB_NAME}?host={sock}"
     admin = f"postgresql+asyncpg://{ADMIN_ROLE}@/{DB_NAME}?host={sock}"
     return app, admin
+
+
+def local_chat_url(directory: Path | None = None) -> str:
+    """The read-only chat role's URL for the embedded cluster."""
+    sock = _socket_dir(directory)
+    return f"postgresql+asyncpg://{CHAT_ROLE}@/{DB_NAME}?host={sock}"
 
 
 def local_sync_admin_url(directory: Path | None = None) -> str:

@@ -36,6 +36,7 @@ def pg_cluster(tmp_path_factory):
     app_url, admin_url = local.local_urls(pgdata)
     settings.database_url = app_url
     settings.database_admin_url = admin_url
+    settings.database_chat_url = local.local_chat_url(pgdata)
 
     env = dict(os.environ, BANKLENS_ALEMBIC_URL=local.local_sync_admin_url(pgdata))
     subprocess.run(
@@ -150,3 +151,13 @@ def mocked_llm():
         patch("app.graph.nodes._narrate_sync", side_effect=_fake_narrate_factory()),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """The limiter is per process; a test run is one very busy user."""
+    from app.api import deps
+
+    deps.reset_rate_limits()
+    yield
+    deps.reset_rate_limits()

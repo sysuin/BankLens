@@ -958,6 +958,53 @@ def main_api() -> None:
             ]
             st.dataframe(frame, use_container_width=True, hide_index=True)
 
+    with st.expander("📊 Numbers the chat answers without a model", expanded=False):
+        st.caption(
+            "Questions matching these run a vetted SQL template as a read-only "
+            "database role over tenant-filtered views. No model call, and every "
+            "run is logged."
+        )
+        try:
+            tpls = client.warehouse_templates()
+            log = client.query_log(20)
+        except ApiError as exc:
+            tpls, log = [], []
+            st.error(exc.detail)
+        if tpls:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "template": t["name"],
+                            "answers": t["description"],
+                            "try asking": ", ".join(t["examples"]),
+                        }
+                        for t in tpls
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        st.markdown("**Query log** (what actually ran, newest first)")
+        if log:
+            st.dataframe(
+                pd.DataFrame(log)[
+                    [
+                        "created_at",
+                        "template",
+                        "params",
+                        "role",
+                        "actor",
+                        "rows",
+                        "duration_ms",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("Nothing yet. Ask the chat for the savings rate.")
+
     with st.expander("⏱️ Traces: where the time and the money went", expanded=False):
         try:
             trace_rows = client.traces(detail["id"])

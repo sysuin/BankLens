@@ -256,14 +256,24 @@ class ChatGuard:
     detail: dict
 
 
-def guard_chat_question(question: str, tenant: str) -> ChatGuard:
-    """Injection first, then scope, then PII redaction of what passes."""
+def guard_chat_question(
+    question: str, tenant: str, *, check_scope: bool = True
+) -> ChatGuard:
+    """
+    Injection first, then scope, then PII redaction of what passes.
+
+    The chat route runs the intent router between injection and scope: a
+    question that maps to a vetted template is in scope by definition, so
+    it calls this with check_scope=False after the router has spoken.
+    """
     from app.pipeline.sanitizer import sanitize_text
 
     verdict = scan_injection(question)
     if verdict.blocked:
         return ChatGuard(False, "injection", "", verdict.as_dict())
-    in_scope, coverage, unknown = scope_gate(question, tenant)
+    in_scope, coverage, unknown = (
+        scope_gate(question, tenant) if check_scope else (True, 1.0, [])
+    )
     if not in_scope:
         return ChatGuard(
             False,
@@ -389,10 +399,12 @@ def guard_sql(sql: str, allowed_relations: set[str], max_limit: int = 500) -> Ve
         reasons.append("relation not allowed: " + ", ".join(bad))
     if not relations:
         reasons.append("no relation")
-    limit = re.search(r"\blimit\s+(\d+)\b", text, re.I)
+    # A literal LIMIT is capped here; a bound LIMIT (:limit) is capped when
+    # the parameter is bound (see app.warehouse.query.bind_params).
+    limit = re.search(r"\blimit\s+(\d+|:[a-zA-Z_]\w*)\b", text, re.I)
     if limit is None:
         reasons.append("no LIMIT")
-    elif int(limit.group(1)) > max_limit:
+    elif limit.group(1).isdigit() and int(limit.group(1)) > max_limit:
         reasons.append(f"LIMIT above {max_limit}")
     if "--" in text or "/*" in text:
         reasons.append("comment")

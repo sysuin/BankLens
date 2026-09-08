@@ -238,7 +238,7 @@ def test_in_scope_question_reaches_the_model_redacted(client, meridian_rm):
             "POST",
             f"/statements/{statement['id']}/chat",
             meridian_rm,
-            {"question": "Why is the savings rate for account 123456789012 so high?"},
+            {"question": "Which product suits account 123456789012 and why?"},
         )
     assert events[-1]["event"] == "done"
     assert "123456789012" not in seen["question"]
