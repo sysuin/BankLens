@@ -209,6 +209,37 @@ class Settings(BaseSettings):
     otel_service_name: str = "banklens-api"
     otel_exporter_otlp_endpoint: str = ""
 
+    # ── Model gateway (Phase 4) ──────────────────────────────────────────────
+    # One interface, several providers. "auto" picks OpenAI when a key is
+    # configured and Ollama otherwise, which is what makes the zero-key demo
+    # work without touching any code. Fallback tries the other provider when
+    # the first one is failing, its circuit is open, or the tenant's daily
+    # budget is spent (only a cost-free provider may serve after that).
+    llm_provider: str = "auto"  # auto | openai | ollama
+    llm_fallback_enabled: bool = True
+    llm_timeout_s: float = 90.0
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "qwen2.5:3b"
+    ollama_mini_model: str = "qwen2.5:3b"
+    ollama_embedding_model: str = "nomic-embed-text"
+    gateway_failure_threshold: int = 3
+    gateway_cooldown_s: float = 60.0
+    tenant_daily_budget_usd: float = 2.0
+
+    # Per-user request rate (sliding minute), enforced in-process. A
+    # multi-process deployment moves this to Redis; the check is one function.
+    rate_limit_per_minute: int = 120
+
+    # Where the exact-key profile cache lives: "postgres" is shared between
+    # the API and the worker and is tenant-scoped; "file" is the original
+    # single-process cache. "auto" = postgres when a database is reachable.
+    profile_cache_backend: str = "auto"
+
+    # Bulk worker: how many jobs one worker process runs at once, and how
+    # long a claimed job may run before another worker may reclaim it.
+    worker_concurrency: int = 2
+    job_lease_seconds: int = 900
+
     # "text" for humans, "json" for log shippers. Either way every line
     # carries request_id, tenant and user when they are in scope.
     log_format: str = "text"

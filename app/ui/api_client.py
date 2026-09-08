@@ -138,6 +138,12 @@ class BankLensClient:
     def audit(self, statement_id: str) -> list[dict]:
         return self._get(f"/statements/{statement_id}/audit")
 
+    def gateway(self) -> dict:
+        return self._get("/platform/gateway")
+
+    def jobs_summary(self) -> dict:
+        return self._get("/jobs/summary")
+
     def traces(self, statement_id: str) -> list[dict]:
         return self._get(f"/statements/{statement_id}/traces")
 

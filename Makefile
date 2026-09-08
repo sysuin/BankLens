@@ -16,7 +16,7 @@ PY ?= .venv311/bin/python
 UVICORN ?= .venv311/bin/uvicorn
 STREAMLIT ?= .venv311/bin/streamlit
 
-.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace
+.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare
 
 db:
 	$(PY) -c "from app.db.local import ensure_local_cluster, cluster_dir; ensure_local_cluster(); print('Postgres running at', cluster_dir())"
@@ -43,8 +43,30 @@ lint:
 	$(PY) -m black --check .
 	$(PY) -m flake8 .
 
+# Free layer by default. PROVIDER=ollama runs the grounded layer on the local
+# model with no API key; PROVIDER=openai on the hosted one.
+#   make evals                       deterministic layer + BM25 headroom
+#   make evals PROVIDER=ollama       + grounded layer on the local model
 evals:
+ifdef PROVIDER
+	LLM_PROVIDER=$(PROVIDER) LLM_FALLBACK_ENABLED=false PROFILE_CACHE_ENABLED=false $(PY) -m evals.run_evals --with-llm
+else
 	$(PY) -m evals.run_evals --headroom
+endif
+
+# The same golden suite on both providers, side by side.
+compare:
+	PROFILE_CACHE_ENABLED=false $(PY) -m evals.compare_providers --providers $${PROVIDERS:-openai,ollama}
+
+# The bulk worker (run next to the API). Drains the queue and keeps polling.
+worker:
+	$(PY) -m app.worker
+
+# Enqueue 50 statements, run the worker inline, print throughput and cost.
+#   make load                  ingest only (free)
+#   make load KIND=ingest_and_run   also runs the graph
+load:
+	$(PY) -m scripts.load_test --n $${N:-50} --kind $${KIND:-ingest} --tenant $${TENANT:-meridian}
 
 baseline:
 	PROFILE_CACHE_ENABLED=false $(PY) -m evals.baseline.measure_baseline --repeats 2

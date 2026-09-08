@@ -20,7 +20,6 @@ from pathlib import Path
 from langchain_community.document_loaders import TextLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from pydantic import BaseModel, Field
@@ -69,7 +68,13 @@ def list_tenants() -> list[str]:
 
 
 def persist_dir_for(tenant: str | None = None) -> str:
-    return str(Path(settings.chroma_persist_dir) / _tenant_or_default(tenant))
+    """One index per tenant per embedding provider: vectors never mix."""
+    from app.platform import gateway
+
+    provider = gateway.embedding_signature().split(":", 1)[0]
+    return str(
+        Path(settings.chroma_persist_dir) / _tenant_or_default(tenant) / provider
+    )
 
 
 def collection_name_for(tenant: str | None = None) -> str:
@@ -165,9 +170,11 @@ def compute_kb_fingerprint(tenant: str | None = None) -> str:
         digest.update(md_file.name.encode("utf-8"))
         digest.update(md_file.read_bytes())
 
+    from app.platform import gateway
+
     digest.update(
         f"{settings.chunk_size}|{settings.chunk_overlap}|"
-        f"{settings.openai_embedding_model}".encode("utf-8")
+        f"{gateway.embedding_signature()}".encode("utf-8")
     )
 
     return digest.hexdigest()
@@ -226,7 +233,7 @@ def reset_bm25_cache() -> None:
 
 def _rebuild_vector_store(
     persist_dir: str,
-    embeddings: OpenAIEmbeddings,
+    embeddings,
     fingerprint: str,
     tenant: str | None = None,
 ) -> Chroma:
@@ -256,11 +263,10 @@ def build_vector_store(tenant: str | None = None) -> Chroma:
     changed, when it was built before fingerprinting existed, or when it fails
     to load at all.
     """
+    from app.platform import gateway
+
     resolved = _tenant_or_default(tenant)
-    embeddings = OpenAIEmbeddings(
-        model=settings.openai_embedding_model,
-        openai_api_key=settings.openai_api_key or "dummy_key",
-    )
+    embeddings = gateway.embeddings()
 
     persist_dir = persist_dir_for(resolved)
     fingerprint = compute_kb_fingerprint(resolved)
@@ -428,9 +434,10 @@ def _generate_query_variants(query: str, count: int) -> list[str]:
     """
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI
 
-    if not settings.openai_api_key:
+    from app.platform import gateway
+
+    if not gateway.available():
         return []
 
     try:
@@ -441,11 +448,7 @@ def _generate_query_variants(query: str, count: int) -> list[str]:
                 ("human", "<query>\n{query}\n</query>"),
             ]
         )
-        llm = ChatOpenAI(
-            model=settings.openai_mini_model,
-            temperature=0.0,
-            openai_api_key=settings.openai_api_key,
-        )
+        llm = gateway.chat_model("mini", temperature=0.0)
         result: QueryVariants = (prompt | llm | parser).invoke(
             {
                 "query": query,

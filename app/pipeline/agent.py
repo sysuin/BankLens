@@ -18,7 +18,6 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
 from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -304,20 +303,12 @@ def _build_profile(
         ]
     )
 
-    primary_llm = ChatOpenAI(
-        model=settings.openai_model,
-        temperature=0.2,
-        openai_api_key=settings.openai_api_key or "dummy_key",
-    )
+    # The gateway chooses the provider (OpenAI or a local model), retries
+    # with jitter, falls back to the mini model and then to the other
+    # provider, and opens a span per call with tokens and cost.
+    from app.platform import gateway
 
-    backup_llm = ChatOpenAI(
-        model=settings.openai_mini_model,
-        temperature=0.2,
-        openai_api_key=settings.openai_api_key or "dummy_key",
-    )
-
-    # Attach fallback to handle transient API downtime
-    llm = primary_llm.with_fallbacks([backup_llm])
+    llm = gateway.chat_model("primary", temperature=0.2)
     chain = prompt | llm | parser
 
     logger.info(

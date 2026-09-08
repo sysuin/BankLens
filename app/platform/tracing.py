@@ -237,12 +237,21 @@ def _context_attributes() -> dict[str, Any]:
     return attrs
 
 
-@contextmanager
-def span(name: str, **attributes: Any) -> Iterator[trace.Span]:
+_INHERITED = (
+    ATTR_TENANT_ID,
+    ATTR_TENANT,
+    ATTR_RUN_ID,
+    ATTR_STATEMENT_ID,
+    ATTR_REQUEST_ID,
+    ATTR_USER,
+)
+
+
+def inherited_attributes(**attributes: Any) -> dict[str, Any]:
     """
-    Open a span, inheriting tenant/user/request attributes from the parent
-    span when they are not given explicitly. Exceptions mark the span as an
-    error and are re-raised.
+    Attributes a new span should start with: the request context, then the
+    given ones, then whatever identity the parent span carries that is
+    still missing. Used by span() and by the gateway's per-call spans.
     """
     attrs = {
         **_context_attributes(),
@@ -250,16 +259,20 @@ def span(name: str, **attributes: Any) -> Iterator[trace.Span]:
     }
     parent = trace.get_current_span()
     parent_attrs = getattr(parent, "attributes", None) or {}
-    for key in (
-        ATTR_TENANT_ID,
-        ATTR_TENANT,
-        ATTR_RUN_ID,
-        ATTR_STATEMENT_ID,
-        ATTR_REQUEST_ID,
-        ATTR_USER,
-    ):
+    for key in _INHERITED:
         if key not in attrs and key in parent_attrs:
             attrs[key] = parent_attrs[key]
+    return attrs
+
+
+@contextmanager
+def span(name: str, **attributes: Any) -> Iterator[trace.Span]:
+    """
+    Open a span, inheriting tenant/user/request attributes from the parent
+    span when they are not given explicitly. Exceptions mark the span as an
+    error and are re-raised.
+    """
+    attrs = inherited_attributes(**attributes)
     with tracer().start_as_current_span(name, attributes=attrs) as current:
         try:
             yield current

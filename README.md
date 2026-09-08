@@ -68,6 +68,10 @@ make api       # http://localhost:8000  (docs at /docs)
 make ui        # http://localhost:8501  (console in API mode)
 ```
 
+For the zero-key path, install Ollama once and pull the two small models
+(about 2.2 GB): `brew install ollama && ollama serve`, then
+`ollama pull qwen2.5:3b && ollama pull nomic-embed-text`.
+
 Demo users, password `banklens-demo`: `rm@meridian.example`,
 `reviewer@meridian.example`, `rm@harbor.example`, `reviewer@harbor.example`.
 Meridian Bank has the original ten-product catalogue; Harbor Credit Union has
@@ -161,6 +165,50 @@ and cost; `GET /traces/{id}` returns the spans as a tree. `GET /platform/prompts
 is the registry of prompt versions and the models they ran against.
 `python -m evals.run_evals --with-llm` now prints p50 / p95 / p99 latency and
 cost per query for the grounded layer.
+
+### The model gateway, the local model, and bulk work (Phase 4)
+
+Every model call goes through `app/platform/gateway.py`. It knows two
+providers, OpenAI and a local Ollama server, both spoken to over the same
+OpenAI-compatible protocol, so switching provider changes no pipeline code.
+
+- **Selection.** `LLM_PROVIDER=auto` uses OpenAI when a key is configured and
+  Ollama otherwise. With no `OPENAI_API_KEY` at all the whole platform runs on
+  `qwen2.5:3b` and `nomic-embed-text`: the zero-key demo.
+- **Resilience.** Retries with exponential backoff and jitter; a circuit
+  breaker per provider (open after three consecutive failures, half-open after
+  the cooldown); fallback to the provider's mini model, then to the other
+  provider.
+- **Cost-aware.** Each tenant has a daily budget for hosted models. Spend is
+  read from the `spans` table, so what the gateway enforces is exactly what
+  tracing recorded. Over budget, calls route to the cost-free provider, or are
+  refused with a clear reason when none exists.
+- **Visible.** `GET /platform/gateway` shows providers, circuit state, spend
+  today, and which provider the next call would use and why. The console
+  prints the same line in its sidebar.
+
+```bash
+make evals PROVIDER=ollama     # grounded layer on the local model, no API key
+make compare                   # the same suite on both providers, side by side
+```
+
+**Bulk work.** `POST /jobs` enqueues a statement (kind `ingest` or
+`ingest_and_run`); `python -m app.worker` claims jobs with
+`SELECT … FOR UPDATE SKIP LOCKED`, leases them, and records duration and cost
+per job from the spans it produced. `make load` enqueues fifty synthetic
+statements, drains the queue and prints throughput. The exact-key profile
+cache moved to a tenant-scoped Postgres table shared by the API and the
+worker, and every user has a per-minute request limit.
+
+```
+enqueued 50 ingest jobs in 1.0s
+worker processed 50 jobs in 8.5s
+finished                50/50   failed 0
+per-statement p50             36 ms
+per-statement p95           1597 ms
+throughput                 356.7 statements/min
+cost                    $0.0000 total
+```
 
 
 ---

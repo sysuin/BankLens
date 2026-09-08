@@ -759,6 +759,25 @@ def main_api() -> None:
                 sidebar_generate_clicked = True
                 ss.active_tab = "profiler"
         st.markdown("---")
+        try:
+            gw = client.gateway()
+            use = gw.get("would_use") or {}
+            budget = gw.get("budget") or {}
+            provider_line = (
+                f"model gateway → **{use.get('provider')}** ({use.get('reason')})"
+            )
+            if budget:
+                provider_line += (
+                    f" · spent today ${budget['spent_today_usd']:.4f} "
+                    f"of ${budget['daily_limit_usd']:.2f}"
+                )
+            circuits = ", ".join(
+                f"{p['name']}: {p['circuit']}" for p in gw.get("providers", [])
+            )
+            st.caption(provider_line)
+            st.caption(f"circuits — {circuits}")
+        except ApiError:
+            pass
         st.caption(f"API: {settings.banklens_api_url}")
 
     if not ss.selected_statement_id:

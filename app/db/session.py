@@ -71,6 +71,19 @@ def admin_engine() -> AsyncEngine:
     return _admin_engine
 
 
+def reset_engines() -> None:
+    """
+    Forget the engines without disposing them.
+
+    For code that is about to run on a different event loop (the worker
+    started from a test, a script after the API): asyncpg connections are
+    bound to the loop that created them, so the next caller must build new
+    engines rather than reuse these.
+    """
+    global _app_engine, _admin_engine
+    _app_engine = _admin_engine = None
+
+
 async def dispose_engines() -> None:
     global _app_engine, _admin_engine
     for engine in (_app_engine, _admin_engine):

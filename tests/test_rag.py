@@ -194,16 +194,21 @@ class TestBuildVectorStoreFreshness:
         Indexes live under <chroma_persist_dir>/<tenant>/, so the fake index
         goes in the default tenant's subdirectory.
         """
-        persist = tmp_path / rag.settings.default_tenant
-        persist.mkdir()
+        from app.platform import gateway
+
+        provider = gateway.embedding_signature().split(":", 1)[0]
+        persist = tmp_path / rag.settings.default_tenant / provider
+        persist.mkdir(parents=True)
         (persist / "chroma.sqlite3").write_text("not empty", encoding="utf-8")
         return persist
 
     def _run(self, persist, monkeypatch):
-        monkeypatch.setattr(rag.settings, "chroma_persist_dir", str(persist.parent))
+        monkeypatch.setattr(
+            rag.settings, "chroma_persist_dir", str(persist.parent.parent)
+        )
 
         with (
-            patch.object(rag, "OpenAIEmbeddings"),
+            patch("app.platform.gateway.embeddings"),
             patch.object(rag, "get_cached_bm25_retriever"),
             patch.object(rag, "_load_documents", return_value=["doc"]),
             patch.object(rag, "_chunk_documents", return_value=["chunk"]),

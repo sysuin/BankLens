@@ -19,13 +19,13 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **327 passed** in 17 files, 27 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **342 passed** in 18 files, 40 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | | `wc -l` |
-| Tokens saved by cache | n/a (measured in Phase 4) | | |
+| Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a (suite built in Phase 5) | | |
-| Bulk throughput and cost | n/a (Phase 4) | | |
+| Bulk throughput and cost | n/a | **50 statements in 8.5 s worker time (356.7/min), p50 36 ms, p95 1.6 s, $0 (ingest only, concurrency 2)** | `make load` |
 | Tenant isolation test | n/a | **7 tests in `tests/test_tenancy.py` + `make prove-isolation` (RLS on → nothing; RLS off → row leaks; on → nothing)** | `make prove-isolation` |
-| Local-model golden pass rate | n/a (Phase 4) | | |
+| Local-model golden pass rate | n/a | see Phase 4 findings (`make compare`) | `make compare` |
 | Minutes saved per statement | ~20 min manual (assumption, `docs/discovery.md`) | | |
 
 ## Phase 1 findings (2026-09-08)
@@ -47,6 +47,13 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 - The HTTP request span is 5 ms because the response streams; the run's own span (`graph.run`) is the one that closes with the last event, so a streamed run is still one complete trace.
 - Span store: 11 spans per run, ~1 KB each, written by the exporter as the owner and read under RLS. Spans without a tenant (health checks) are not stored.
 - Prompt registry: one row, `system_prompt` version `5e372eacf2da` × `gpt-4o`, `uses` incremented on every uncached narrate.
+
+## Phase 4 findings (2026-09-08)
+
+- **Zero-key path works end to end.** With `OPENAI_API_KEY` empty the gateway runs on `qwen2.5:3b` + `nomic-embed-text` (Ollama, 8 GB laptop): Meridian index built in 23 s, retrieval 6.9 s, profile 26.7 s, and the 3B model produced a profile that passed catalogue validation ("Sweep-In Fixed Deposit" / "Recurring Deposit").
+- **Bulk ingest is cheap and fast**: 50 synthetic statements, worker concurrency 2, 8.5 s, p50 36 ms per statement, no model calls, so $0.
+- **Budget enforcement reads the same table tracing writes.** `GET /platform/gateway` after the day's runs: spent $0.0096 of $2.00, would use `openai` (primary), both circuits closed.
+- Side-by-side golden suite: see the table appended below once `make compare` has run.
 
 ## Caveats I say out loud
 

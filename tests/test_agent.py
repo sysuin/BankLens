@@ -237,7 +237,13 @@ class TestCorrectiveRetry:
             made.append(model)
             return model
 
-        monkeypatch.setattr(agent_module, "ChatOpenAI", fake_chat_openai)
+        from app.platform import gateway
+
+        monkeypatch.setattr(
+            gateway,
+            "chat_model",
+            lambda role="primary", temperature=0.0, **kw: fake_chat_openai(),
+        )
         return agent_module.build_profile(
             self._metrics(),
             [{"source": "fixed_deposit.md", "content": "Fixed Deposit details."}],

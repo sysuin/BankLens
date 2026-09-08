@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.security import TokenError, decode_access_token
 from app.core import context
+from app.core.config import settings
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -56,7 +57,45 @@ async def current_user(
         request_id=context.current_request_id() or context.new_request_id(),
     )
     request.state.principal = principal
+    _rate_limit(principal)
     return principal
+
+
+# ── Rate limiting ────────────────────────────────────────────────────────────
+#
+# Sliding one-minute window per user, in process memory. Correct for one API
+# process; a multi-process deployment swaps `_windows` for Redis and keeps
+# this function's shape. The limit is a setting so tests can lower it.
+
+import collections  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+_windows: dict[uuid.UUID, collections.deque] = {}
+_windows_lock = threading.Lock()
+
+
+def _rate_limit(principal: Principal) -> None:
+    limit = settings.rate_limit_per_minute
+    if limit <= 0:
+        return
+    now = time.monotonic()
+    with _windows_lock:
+        window = _windows.setdefault(principal.user_id, collections.deque())
+        while window and now - window[0] > 60.0:
+            window.popleft()
+        if len(window) >= limit:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"rate limit: {limit} requests per minute per user",
+                headers={"Retry-After": "60"},
+            )
+        window.append(now)
+
+
+def reset_rate_limits() -> None:
+    with _windows_lock:
+        _windows.clear()
 
 
 def require_role(*roles: str):

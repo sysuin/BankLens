@@ -74,7 +74,16 @@ async def get_checkpointer() -> AsyncPostgresSaver:
 async def close_checkpointer() -> None:
     global _pool, _saver
     if _pool is not None:
-        await _pool.close()
+        try:
+            await _pool.close()
+        except Exception as exc:  # noqa: BLE001 - shutting down; never block it
+            logger.warning("checkpointer pool close failed: %s", exc)
+    _pool = _saver = None
+
+
+def reset_checkpointer() -> None:
+    """Forget the pool without closing it (about to switch event loops)."""
+    global _pool, _saver
     _pool = _saver = None
 
 

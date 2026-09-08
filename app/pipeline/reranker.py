@@ -95,7 +95,6 @@ def _rerank_with_llm(query: str, candidates: list[dict], top_k: int) -> list[dic
     """Rerank via a single listwise call to the mini model."""
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI
 
     parser = PydanticOutputParser(pydantic_object=RerankRanking)
 
@@ -117,11 +116,9 @@ def _rerank_with_llm(query: str, candidates: list[dict], top_k: int) -> list[dic
         ]
     )
 
-    llm = ChatOpenAI(
-        model=settings.openai_mini_model,
-        temperature=0.0,
-        openai_api_key=settings.openai_api_key,
-    )
+    from app.platform import gateway
+
+    llm = gateway.chat_model("mini", temperature=0.0)
 
     result: RerankRanking = (prompt | llm | parser).invoke(
         {
@@ -198,7 +195,9 @@ def rerank(query: str, candidates: list[dict], top_k: int | None = None) -> list
 
     try:
         if backend == "llm":
-            if not settings.openai_api_key:
+            from app.platform import gateway
+
+            if not gateway.available():
                 logger.info("No API key configured; skipping LLM rerank.")
                 return fallback
             reranked = _rerank_with_llm(query, candidates, limit)

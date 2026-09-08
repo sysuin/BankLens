@@ -88,9 +88,9 @@ class _FakeLLM:
 
 class TestAgentLoop:
     def _patch_llm(self, monkeypatch, fake):
-        import langchain_openai
+        from app.platform import gateway
 
-        monkeypatch.setattr(langchain_openai, "ChatOpenAI", lambda **kw: fake)
+        monkeypatch.setattr(gateway, "ChatOpenAI", lambda **kw: fake)
 
     def test_tool_round_then_streamed_answer(self, monkeypatch, metrics):
         fake = _FakeLLM(

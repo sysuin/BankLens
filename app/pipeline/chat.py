@@ -29,7 +29,6 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 
-from app.core.config import settings
 from app.core.context import current_tenant
 from app.core.logger import get_logger
 from app.pipeline.analyzer import FinancialMetrics
@@ -131,16 +130,16 @@ def run_chat_turn(
     again. Tool-decision rounds usually stream no visible text, so the user
     sees tool activity as latency and then a genuinely streamed answer.
     """
-    from langchain_openai import ChatOpenAI
+    from app.platform import gateway
 
     tools = make_tools(metrics, categorized_df, tenant)
     tools_by_name = {t.name: t for t in tools}
 
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        temperature=0.3,
-        openai_api_key=settings.openai_api_key,
-    ).bind_tools(tools)
+    # Streaming needs the raw client; the gateway still picks the provider
+    # and traces every call.
+    llm = gateway.chat_model("primary", temperature=0.3, streaming=True).bind_tools(
+        tools
+    )
 
     messages: list[BaseMessage] = [
         SystemMessage(content=CHAT_SYSTEM_PROMPT),

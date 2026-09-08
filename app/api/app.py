@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, customers, health, reviews, statements, traces
+from app.api.routes import auth, customers, health, jobs, reviews, statements, traces
 from app.api.security import assert_secret_is_safe_for
 from app.core import context
 from app.core.config import settings
@@ -33,6 +33,9 @@ logger = get_logger(__name__)
 async def lifespan(_: FastAPI):
     assert_secret_is_safe_for(settings.banklens_env)
     setup_tracing()
+    from app.platform import gateway
+
+    gateway.enable_budgets()
     logger.info(
         "BankLens API starting env=%s default_tenant=%s",
         settings.banklens_env,
@@ -41,9 +44,11 @@ async def lifespan(_: FastAPI):
     yield
     from app.graph.builder import close_checkpointer
 
-    await close_checkpointer()
-    await dispose_engines()
-    shutdown_tracing()
+    try:
+        await close_checkpointer()
+    finally:
+        await dispose_engines()
+        shutdown_tracing()
     logger.info("BankLens API stopped")
 
 
@@ -112,6 +117,7 @@ def create_app() -> FastAPI:
     application.include_router(statements.router)
     application.include_router(reviews.router)
     application.include_router(traces.router)
+    application.include_router(jobs.router)
     return application
 
 

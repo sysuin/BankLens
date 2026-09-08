@@ -70,6 +70,7 @@ class TestRerankFallbacks:
     def test_missing_api_key_returns_fusion_order(self, monkeypatch):
         monkeypatch.setattr(settings, "rerank_backend", "llm")
         monkeypatch.setattr(settings, "openai_api_key", "")
+        monkeypatch.setattr(settings, "ollama_base_url", "")
         candidates = _candidates(6)
         assert rerank("q", candidates, top_k=2) == candidates[:2]
 

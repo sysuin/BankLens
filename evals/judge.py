@@ -21,7 +21,6 @@ Design choices worth defending:
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -249,11 +248,9 @@ def _run_juror(
     # identical input return the same answer three times, which is a single
     # opinion wearing a rosette. Reproducibility is deliberately traded here;
     # every deterministic check in the suite stays exactly reproducible.
-    judge = ChatOpenAI(
-        model=settings.openai_mini_model,
-        temperature=0.4,
-        openai_api_key=settings.openai_api_key,
-    )
+    from app.platform import gateway
+
+    judge = gateway.chat_model("mini", temperature=0.4)
 
     return (prompt | judge | parser).invoke(
         {

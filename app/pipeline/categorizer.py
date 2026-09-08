@@ -15,10 +15,8 @@ Supported categories:
 
 import json
 import pandas as pd
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.core.config import settings
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -239,7 +237,9 @@ def batch_llm_categorize_others(
     Stage 2: Batch LLM classification for items assigned 'Others'.
     Returns a dictionary mapping description -> category.
     """
-    if not uncategorized_descriptions or not settings.openai_api_key:
+    from app.platform import gateway
+
+    if not uncategorized_descriptions or not gateway.available():
         return {desc: "Others" for desc in uncategorized_descriptions}
 
     try:
@@ -254,11 +254,9 @@ def batch_llm_categorize_others(
                 ("human", "Classify these transaction descriptions: {descriptions}"),
             ]
         )
-        llm = ChatOpenAI(
-            model=settings.openai_mini_model,
-            temperature=0.0,
-            openai_api_key=settings.openai_api_key,
-        )
+        from app.platform import gateway
+
+        llm = gateway.chat_model("mini", temperature=0.0)
         chain = prompt | llm
         res = chain.invoke({"descriptions": json.dumps(uncategorized_descriptions)})
         content = res.content.strip()
@@ -283,7 +281,9 @@ def categorize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     others_mask = result["category"] == "Others"
     others_descs = result.loc[others_mask, "description"].unique().tolist()
 
-    if others_descs and settings.openai_api_key:
+    from app.platform import gateway
+
+    if others_descs and gateway.available():
         llm_mapped = batch_llm_categorize_others(others_descs)
         result.loc[others_mask, "category"] = result.loc[
             others_mask, "description"

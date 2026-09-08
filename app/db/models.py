@@ -26,6 +26,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -67,6 +68,14 @@ class RunStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class JobStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    done = "done"
+    awaiting_review = "awaiting_review"
+    failed = "failed"
+
+
 class DecisionStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
@@ -82,6 +91,11 @@ class Tenant(Base):
     )
     slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # USD per day on hosted models before the gateway routes to a cost-free
+    # provider. NULL means settings.tenant_daily_budget_usd.
+    daily_budget_usd: Mapped[float | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -447,6 +461,82 @@ class PromptVersion(Base):
     uses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class Job(TenantScoped, Base):
+    """
+    One unit of bulk work: ingest a statement (and optionally run the
+    graph). Claimed by a worker with SELECT ... FOR UPDATE SKIP LOCKED and
+    leased, so a crashed worker's job is picked up again after the lease.
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    tenant_slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # ingest | ingest_and_run
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="job_status"), nullable=False, default=JobStatus.queued
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    leased_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class ProfileCacheEntry(Base):
+    """Exact-key profile cache shared by the API and the worker."""
+
+    __tablename__ = "profile_cache"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    profile_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    hits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_hit_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # Tables whose rows are tenant-owned and therefore carry an RLS policy.
 TENANT_TABLES = (
     "users",
@@ -459,4 +549,6 @@ TENANT_TABLES = (
     "decisions",
     "audit_events",
     "spans",
+    "jobs",
+    "profile_cache",
 )

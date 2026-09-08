@@ -47,7 +47,10 @@ def profile_cache_key(
         digest.update(SYSTEM_PROMPT_PATH.read_bytes())
     except OSError:
         pass
+    from app.platform import gateway
+
     digest.update(settings.openai_model.encode("utf-8"))
+    digest.update(gateway.primary_name().encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -83,6 +86,86 @@ def write_cached_profile(key: str, profile: CustomerProfile) -> None:
         logger.warning("Could not write profile cache entry (%s).", exc)
 
 
+# ── Postgres backend (shared by the API and the worker, tenant-scoped) ──────
+
+
+def _pg_conn(tenant: str):
+    """App-role connection with the tenant pinned, or None if no database."""
+    import psycopg
+
+    from app.db.session import _resolve_urls
+
+    try:
+        app_url, _ = _resolve_urls()
+    except Exception:  # noqa: BLE001 - no database configured
+        return None
+    conninfo = app_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    conn = psycopg.connect(conninfo)
+    tenant_id = conn.execute(
+        "SELECT id FROM tenants WHERE slug = %s", (tenant,)
+    ).fetchone()
+    if tenant_id is None:
+        conn.close()
+        return None
+    conn.execute("SELECT set_config('app.tenant_id', %s, false)", (str(tenant_id[0]),))
+    return conn, tenant_id[0]
+
+
+def _backend() -> str:
+    backend = settings.profile_cache_backend.strip().lower()
+    if backend in ("postgres", "file"):
+        return backend
+    return (
+        "postgres" if (settings.database_url or settings.database_admin_url) else "file"
+    )
+
+
+def read_cached_profile_pg(tenant: str, key: str) -> CustomerProfile | None:
+    try:
+        handle = _pg_conn(tenant)
+        if handle is None:
+            return None
+        conn, _ = handle
+        with conn:
+            row = conn.execute(
+                "UPDATE profile_cache SET hits = hits + 1, last_hit_at = now() "
+                "WHERE cache_key = %s RETURNING profile_json",
+                (key,),
+            ).fetchone()
+        conn.close()
+        if row is None:
+            return None
+        return CustomerProfile.model_validate(row[0])
+    except Exception as exc:  # noqa: BLE001 - a broken cache is a miss
+        logger.warning("Postgres profile cache read failed (%s).", exc)
+        return None
+
+
+def write_cached_profile_pg(tenant: str, key: str, profile: CustomerProfile) -> None:
+    try:
+        handle = _pg_conn(tenant)
+        if handle is None:
+            return
+        conn, tenant_id = handle
+        with conn:
+            conn.execute(
+                "INSERT INTO profile_cache (tenant_id, cache_key, model, prompt_version, "
+                "profile_json) VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (tenant_id, cache_key) DO UPDATE SET profile_json = "
+                "EXCLUDED.profile_json, last_hit_at = now()",
+                (
+                    tenant_id,
+                    key,
+                    settings.openai_model,
+                    hashlib.sha256(SYSTEM_PROMPT_PATH.read_bytes()).hexdigest()[:12],
+                    json.dumps(profile.model_dump(mode="json")),
+                ),
+            )
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Postgres profile cache write failed (%s).", exc)
+
+
 def cached_build_profile(
     metrics: FinancialMetrics,
     retrieved_chunks: list[dict],
@@ -100,15 +183,25 @@ def cached_build_profile(
         return build_profile(metrics, retrieved_chunks, tenant=resolved), False
 
     key = profile_cache_key(metrics, retrieved_chunks, resolved)
+    backend = _backend()
     # Validation of a cached profile checks product names against the
     # tenant's catalogue, so the tenant must be in scope while reading.
     with tenant_scope(resolved):
-        cached = read_cached_profile(key)
+        cached = (
+            read_cached_profile_pg(resolved, key)
+            if backend == "postgres"
+            else read_cached_profile(key)
+        )
     if cached is not None:
-        logger.info("Profile cache HIT (%s…) — skipping LLM call.", key[:12])
+        logger.info(
+            "Profile cache HIT (%s, %s…) — skipping LLM call.", backend, key[:12]
+        )
         return cached, True
 
     profile = build_profile(metrics, retrieved_chunks, tenant=resolved)
-    write_cached_profile(key, profile)
+    if backend == "postgres":
+        write_cached_profile_pg(resolved, key, profile)
+    else:
+        write_cached_profile(key, profile)
     logger.info("Profile cache MISS (%s…) — generated and stored.", key[:12])
     return profile, False
