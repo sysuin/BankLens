@@ -428,6 +428,23 @@ async def guardrails(state: GraphState) -> dict[str, Any]:
         if resolved not in retrieved:
             warnings.append(f"{field} '{name}' was not among the retrieved sources")
 
+    # The narrative must not carry an injected instruction or a PII shape out.
+    from app.platform.guardrails import scan_output
+
+    for field in (
+        "income_stability_analysis",
+        "spending_pattern_breakdown",
+        "credit_risk_assessment",
+        "primary_reason",
+        "secondary_reason",
+    ):
+        verdict = scan_output(str(profile.get(field, "")))
+        if verdict.blocked:
+            violations.append(
+                f"{field} carries {'/'.join(verdict.families)} content: "
+                f"{'; '.join(verdict.matched)}"
+            )
+
     await audit.set_run_status(
         state["tenant_id"],
         state["run_id"],

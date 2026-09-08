@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt && pip install -e .
 
+      - name: Red-team the guardrails
+        run: python -m evals.redteam.run
+
       - name: Run deterministic evals and retrieval headroom
         # Free, no API key needed. Runs first so a logic regression is caught
         # before spending anything on the graded layer. --headroom reports how

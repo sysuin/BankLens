@@ -180,6 +180,11 @@ class BankLensClient:
                     data = json.loads(line[6:])
                     if event == "token":
                         yield data
+                    elif event in ("blocked", "abstained"):
+                        label = (
+                            "🛡️ blocked" if event == "blocked" else "🤷 out of scope"
+                        )
+                        yield f"*{label}: {data.get('reason', event)}*  \n"
                     elif event == "error":
                         raise ApiError(500, data)
                     # "done" carries the full answer; tokens already covered it.

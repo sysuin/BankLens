@@ -76,9 +76,8 @@ def _parse_upload(filename: str, content: bytes) -> tuple[pd.DataFrame, SourceTy
     raise BadInput("Only .csv and .pdf statements are accepted.")
 
 
-def _analyze_sync(
-    filename: str, content: bytes, tenant_slug: str
-) -> tuple[pd.DataFrame, FinancialMetrics, SourceType]:
+def _analyze_sync(filename: str, content: bytes, tenant_slug: str):
+    """(categorized df, metrics, source type, guardrail scan)."""
     from app.platform.tracing import span
 
     with tenant_scope(tenant_slug):
@@ -88,6 +87,15 @@ def _analyze_sync(
             raw, source_type = _parse_upload(filename, content)
         with span("pipeline.sanitize"):
             sanitized = sanitize_dataframe(raw)
+        with span("guardrail.statement_scan") as current:
+            # The statement is attacker-controlled text: neutralise
+            # instruction-like descriptions before the categorizer or any
+            # model sees them. Numbers are untouched.
+            from app.platform.guardrails import scan_statement
+
+            sanitized, scan = scan_statement(sanitized)
+            current.set_attribute("guardrail.flagged_rows", scan.flagged_rows)
+            current.set_attribute("guardrail.families", sorted(set(scan.families)))
         with span("pipeline.categorize") as current:
             categorized = categorize_dataframe(sanitized)
             current.set_attribute(
@@ -97,7 +105,7 @@ def _analyze_sync(
         with span("pipeline.metrics") as current:
             metrics = compute_metrics(categorized)
             current.set_attribute("metrics.rows", int(metrics.transaction_count))
-    return categorized, metrics, source_type
+    return categorized, metrics, source_type, scan
 
 
 def _profile_sync(
@@ -151,8 +159,9 @@ async def ingest_statement_file(
     uploaded_by: uuid.UUID | None,
     filename: str,
     content: bytes,
+    uploaded_by_email: str | None = None,
 ) -> uuid.UUID:
-    """Parse, sanitize, categorize, compute, and store one statement."""
+    """Parse, sanitize, scan, categorize, compute, and store one statement."""
     from app.platform.tracing import (
         ATTR_STATEMENT_ID,
         ATTR_TENANT,
@@ -164,7 +173,7 @@ async def ingest_statement_file(
         "statement.ingest",
         **{ATTR_TENANT: tenant_slug, ATTR_TENANT_ID: str(tenant_id)},
     ) as ingest_span:
-        categorized, metrics, source_type = await asyncio.to_thread(
+        categorized, metrics, source_type, scan = await asyncio.to_thread(
             _analyze_sync, filename, content, tenant_slug
         )
         statement_id = await _persist_statement(
@@ -175,8 +184,20 @@ async def ingest_statement_file(
             source_type,
             categorized,
             metrics,
+            guardrail_flags=scan.as_dict() if scan.flagged_rows else {},
         )
         ingest_span.set_attribute(ATTR_STATEMENT_ID, str(statement_id))
+        if scan.flagged_rows:
+            from app.graph import audit
+
+            await audit.record(
+                tenant_id,
+                statement_id=statement_id,
+                node="guardrail.statement_scan",
+                event="neutralised",
+                actor=uploaded_by_email or "system",
+                payload=scan.as_dict(),
+            )
         return statement_id
 
 
@@ -188,6 +209,7 @@ async def _persist_statement(
     source_type: SourceType,
     categorized: pd.DataFrame,
     metrics: FinancialMetrics,
+    guardrail_flags: dict | None = None,
 ) -> uuid.UUID:
     async with tenant_session(tenant_id) as session:
         customer = await session.get(Customer, customer_id)
@@ -204,6 +226,7 @@ async def _persist_statement(
             period=metrics.period,
             transaction_count=metrics.transaction_count,
             status=StatementStatus.analyzed,
+            guardrail_flags=guardrail_flags or {},
         )
         session.add(statement)
         await session.flush()
@@ -321,6 +344,7 @@ def _summary(statement: Statement) -> dict:
         "risk_band": metrics.risk_band if metrics else None,
         "health_score": metrics.health_score if metrics else None,
         "savings_rate_pct": float(metrics.savings_rate_pct) if metrics else None,
+        "guardrail_flags": statement.guardrail_flags or {},
         "created_at": statement.created_at,
     }
 

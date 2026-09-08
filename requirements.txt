@@ -40,3 +40,6 @@ psycopg-pool>=3.2
 opentelemetry-api>=1.30
 opentelemetry-sdk>=1.30
 opentelemetry-exporter-otlp-proto-http>=1.30
+
+# ── Guardrails red-team suite (Phase 5): generates an injected statement PDF ──
+fpdf2>=2.8

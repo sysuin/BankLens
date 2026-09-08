@@ -175,6 +175,9 @@ class Statement(TenantScoped, Base):
         nullable=False,
         default=StatementStatus.analyzed,
     )
+    # What the guardrails did to this statement at ingest: rows neutralised
+    # for instruction-like text, and why. Empty dict = nothing found.
+    guardrail_flags: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

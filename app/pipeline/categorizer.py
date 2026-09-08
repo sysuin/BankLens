@@ -280,6 +280,11 @@ def categorize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Stage 2: LLM Fallback for 'Others'
     others_mask = result["category"] == "Others"
     others_descs = result.loc[others_mask, "description"].unique().tolist()
+    # Rows the guardrails neutralised carry a marker, not a merchant: they
+    # stay "Others" and never reach the model.
+    from app.platform.guardrails import NEUTRALISED
+
+    others_descs = [d for d in others_descs if d != NEUTRALISED]
 
     from app.platform import gateway
 

@@ -240,6 +240,15 @@ class Settings(BaseSettings):
     worker_concurrency: int = 2
     job_lease_seconds: int = 900
 
+    # ── Guardrails (Phase 5) ─────────────────────────────────────────────────
+    # Injection scanning is deterministic (pattern families, weighted); a
+    # text scores >= the block score is neutralised before any model sees it.
+    guardrail_injection_block_score: float = 1.0
+    # Out-of-scope gate for the chat: share of the question's content words
+    # that appear in the tenant's catalogue + statement vocabulary. At or
+    # below the floor the assistant abstains without calling a model.
+    guardrail_scope_floor: float = 0.50
+
     # "text" for humans, "json" for log shippers. Either way every line
     # carries request_id, tenant and user when they are in scope.
     log_format: str = "text"

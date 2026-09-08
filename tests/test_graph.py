@@ -67,7 +67,8 @@ def sse_events(
                 kind = line[7:]
             elif line.startswith("data: "):
                 data = json.loads(line[6:])
-        events.append({"event": kind, **data})
+        payload = data if isinstance(data, dict) else {"data": data}
+        events.append({"event": kind, **payload})
     return events
 
 

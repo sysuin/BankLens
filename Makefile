@@ -16,7 +16,7 @@ PY ?= .venv311/bin/python
 UVICORN ?= .venv311/bin/uvicorn
 STREAMLIT ?= .venv311/bin/streamlit
 
-.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare
+.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare redteam
 
 db:
 	$(PY) -c "from app.db.local import ensure_local_cluster, cluster_dir; ensure_local_cluster(); print('Postgres running at', cluster_dir())"
@@ -81,3 +81,9 @@ prove-isolation:
 #   make trace TENANT=harbor
 trace:
 	$(PY) -m scripts.show_trace --tenant $${TENANT:-meridian}
+
+# The red-team suite: injection in statements (CSV and PDF), chat, SQL and
+# model output. Prints the block rate and the false-positive rate; exits 1
+# below the thresholds. No model calls, so it runs on every push in CI.
+redteam:
+	$(PY) -m evals.redteam.run

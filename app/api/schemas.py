@@ -75,6 +75,7 @@ class StatementSummary(BaseModel):
     risk_band: str | None = None
     health_score: int | None = None
     savings_rate_pct: float | None = None
+    guardrail_flags: dict = Field(default_factory=dict)
     created_at: datetime
 
 

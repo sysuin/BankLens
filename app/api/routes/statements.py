@@ -65,6 +65,7 @@ async def upload_statement(
             uploaded_by=principal.user_id,
             filename=file.filename or "statement",
             content=content,
+            uploaded_by_email=principal.email,
         )
     except service.NotFound as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "customer not found") from exc
@@ -214,6 +215,42 @@ async def chat(
     loop = asyncio.get_running_loop()
     tenant = principal.tenant
 
+    # Guardrails before any model: injection, then scope, then PII redaction.
+    from app.graph import audit
+    from app.platform.guardrails import guard_chat_question
+
+    guard = guard_chat_question(body.question, tenant)
+    if not guard.allowed:
+        message = (
+            "I can't act on instructions embedded in a question. Ask about this "
+            "customer's statement or the bank's products."
+            if guard.reason == "injection"
+            else "That is outside what I can see. I can answer questions about this "
+            "customer's statement and this bank's products."
+        )
+        await audit.record(
+            principal.tenant_id,
+            statement_id=statement_id,
+            node="guardrail.chat",
+            event="blocked" if guard.reason == "injection" else "abstained",
+            actor=principal.email,
+            payload={"reason": guard.reason, **guard.detail},
+        )
+        logger.info("chat %s (%s)", guard.reason, guard.detail)
+
+        async def refused() -> AsyncIterator[str]:
+            yield f"event: {'blocked' if guard.reason == 'injection' else 'abstained'}\n"
+            yield f"data: {json.dumps({'reason': guard.reason, **guard.detail})}\n\n"
+            yield f"event: token\ndata: {json.dumps(message)}\n\n"
+            yield f"event: done\ndata: {json.dumps(message)}\n\n"
+
+        return StreamingResponse(
+            refused(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    question = guard.question
+
     def produce() -> None:
         from langchain_community.callbacks.manager import get_openai_callback
 
@@ -240,7 +277,7 @@ async def chat(
                 ):
                     with get_openai_callback() as cb:
                         for chunk in run_chat_turn(
-                            body.question, history, metrics, df, tenant=tenant
+                            question, history, metrics, df, tenant=tenant
                         ):
                             loop.call_soon_threadsafe(
                                 queue.put_nowait, ("token", chunk)

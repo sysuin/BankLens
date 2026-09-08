@@ -126,6 +126,7 @@ async def process(job: Job) -> None:
                     uploaded_by=job.requested_by,
                     filename=job.filename,
                     content=bytes(job.content),
+                    uploaded_by_email=job.requested_by_email,
                 )
                 job_span.set_attribute(ATTR_STATEMENT_ID, str(statement_id))
                 if job.kind == "ingest_and_run":

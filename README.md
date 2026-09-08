@@ -199,6 +199,47 @@ supports the recommendation, sources present) but fails the advisory
 8.5 s for gpt-4o and $0 against $0.0096 per query. The same suite, two
 providers, one table.
 
+### Guardrails as running code (Phase 5)
+
+The statement is attacker-controlled text. `app/platform/guardrails.py`
+treats it that way, deterministically and before any model:
+
+- **Statement scan at ingest.** Every description is scored against weighted
+  pattern families (override, role hijack, role markers, impersonated
+  authority, exfiltration, tool abuse, encoding tricks). A flagged row's
+  description is replaced with `[removed: instruction-like text]`; its date,
+  amount and type are untouched, so the numbers do not change. What was
+  neutralised is stored on the statement, written to the audit trail, and
+  visible on the `guardrail.statement_scan` span.
+- **Chat gate.** Injection first, then an out-of-scope gate measured as
+  vocabulary coverage (not similarity), then PII redaction of what passes.
+  A blocked or abstained question never reaches the gateway: the reply
+  streams a `blocked` or `abstained` event and costs nothing.
+- **Output scan.** The graph's guardrails node refuses a narrative that
+  echoes an instruction or carries a PII shape.
+- **SQL allow-list.** `guard_sql` accepts one read-only SELECT over
+  allow-listed relations with a LIMIT; the Phase 6 warehouse path uses it.
+
+```bash
+make redteam        # 80 cases, no model calls, exits 1 below the thresholds
+```
+
+```
+channel    category      correct
+chat       benign         8/8      chat       injection      8/8
+chat       off_topic      5/5      output     output         3/3
+sql        benign         4/4      sql        sql           10/10
+statement  benign        25/25     statement  injection     15/15
+block rate on attacks        100.0%   (floor 95%)
+false positives on benign      0.0%   (ceiling 5%)
+  PASS  injected CSV: attack rows neutralised — 3 flagged of 120
+  PASS  injected PDF: parsed and attack rows neutralised — 40 rows parsed, 2 flagged
+```
+
+Benign cases include merchants like "Ignore Fashion Store" and "Override Auto
+Parts", because a guard that blocks those is as broken as one that lets an
+override through. The suite runs in CI on every push.
+
 **Bulk work.** `POST /jobs` enqueues a statement (kind `ingest` or
 `ingest_and_run`); `python -m app.worker` claims jobs with
 `SELECT … FOR UPDATE SKIP LOCKED`, leases them, and records duration and cost

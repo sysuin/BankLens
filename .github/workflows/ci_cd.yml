@@ -77,6 +77,9 @@ jobs:
       - name: Run tests with coverage
         run: pytest tests/ --cov=app --cov-report=term-missing -v
 
+      - name: Red-team the guardrails (no model calls; fails below the thresholds)
+        run: python -m evals.redteam.run
+
   # ── Job 3: Build & Push to ECR ───────────────────────────────────────────────
   build:
     name: Build & Push Docker Image
