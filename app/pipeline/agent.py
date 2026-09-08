@@ -23,7 +23,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.config import settings
 from app.core.context import current_tenant, tenant_scope
 from app.core.logger import get_logger
 from app.pipeline.analyzer import FinancialMetrics, RiskProfile
@@ -313,7 +312,7 @@ def _build_profile(
 
     logger.info(
         "Invoking Profiling Pipeline (%s) | RAG chunks: %d | Sources: %s",
-        settings.openai_model,
+        gateway.primary_name(),
         len(retrieved_chunks),
         source_filenames,
     )

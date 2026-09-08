@@ -21,6 +21,7 @@ async def list_traces(tenant_id: uuid.UUID, statement_id: uuid.UUID) -> list[dic
     async with tenant_session(tenant_id) as session:
         if await session.get(Statement, statement_id) is None:
             raise NotFound("statement not found")
+        touching = select(Span.trace_id).where(Span.statement_id == statement_id)
         totals = (
             select(
                 Span.trace_id,
@@ -32,7 +33,9 @@ async def list_traces(tenant_id: uuid.UUID, statement_id: uuid.UUID) -> list[dic
                 func.count().label("spans"),
                 func.max(cast(Span.run_id, String)).label("run_id"),
             )
-            .where(Span.statement_id == statement_id)
+            # Whole traces, not only the spans stamped with the statement id:
+            # a model call inside the categorizer has no statement id yet.
+            .where(Span.trace_id.in_(touching))
             .group_by(Span.trace_id)
             .order_by(func.min(Span.start_time).desc())
         )
@@ -46,12 +49,6 @@ async def list_traces(tenant_id: uuid.UUID, statement_id: uuid.UUID) -> list[dic
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            # The request span carries no statement id; count the whole trace.
-            spans = (
-                await session.execute(
-                    select(func.count()).where(Span.trace_id == trace_id)
-                )
-            ).scalar_one()
             out.append(
                 {
                     "trace_id": trace_id,

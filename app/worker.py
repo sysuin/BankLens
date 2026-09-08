@@ -86,7 +86,11 @@ async def _cost_for(tenant_id: uuid.UUID, statement_id: uuid.UUID | None) -> flo
         total = (
             await session.execute(
                 text(
-                    "SELECT COALESCE(SUM(cost_usd), 0) FROM spans WHERE statement_id = :s"
+                    # Every span in every trace that touched the statement:
+                    # the categorizer's model calls are children of ingest
+                    # and carry no statement id of their own.
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM spans WHERE trace_id IN "
+                    "(SELECT DISTINCT trace_id FROM spans WHERE statement_id = :s)"
                 ),
                 {"s": str(statement_id)},
             )
