@@ -16,7 +16,7 @@ PY ?= .venv311/bin/python
 UVICORN ?= .venv311/bin/uvicorn
 STREAMLIT ?= .venv311/bin/streamlit
 
-.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline
+.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace
 
 db:
 	$(PY) -c "from app.db.local import ensure_local_cluster, cluster_dir; ensure_local_cluster(); print('Postgres running at', cluster_dir())"
@@ -54,3 +54,8 @@ baseline:
 # is gone again. Runs on a throwaway cluster, never on the dev database.
 prove-isolation:
 	$(PY) -m scripts.prove_isolation
+
+# Print the latest graph run as a waterfall: where the time and the money went.
+#   make trace TENANT=harbor
+trace:
+	$(PY) -m scripts.show_trace --tenant $${TENANT:-meridian}

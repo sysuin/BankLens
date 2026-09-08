@@ -200,6 +200,15 @@ class Settings(BaseSettings):
     income_review_threshold_pct: float = 20.0
     income_log_threshold_pct: float = 10.0
 
+    # ── Tracing (Phase 3) ────────────────────────────────────────────────────
+    # Every request, graph node, retrieval, model call and chat tool call is
+    # an OpenTelemetry span. Spans are always written to the `spans` table
+    # (the offline trace viewer); set the OTLP endpoint to also ship them to
+    # Jaeger / Tempo / any collector (Compose runs Jaeger on 4318).
+    tracing_enabled: bool = True
+    otel_service_name: str = "banklens-api"
+    otel_exporter_otlp_endpoint: str = ""
+
     # "text" for humans, "json" for log shippers. Either way every line
     # carries request_id, tenant and user when they are in scope.
     log_format: str = "text"

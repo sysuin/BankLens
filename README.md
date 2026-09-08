@@ -124,6 +124,44 @@ Every node writes an **audit row**: who acted, on which inputs (as a hash),
 with which model and prompt version, how many tokens, how long. The API role
 can insert and read the trail but never update or delete it.
 
+### Tracing: where the time and the money went (Phase 3)
+
+Every request, graph node, retrieval, model call and chat tool call is an
+OpenTelemetry span. Model spans carry the model, prompt version, tokens in
+and out and the cost in dollars, computed from a price table in
+`app/platform/pricing.py`. Spans always go to the `spans` table (row-level
+security applies when reading them), so the console and the CLI show a
+waterfall with no external service; set `OTEL_EXPORTER_OTLP_ENDPOINT` to ship
+the same spans to Jaeger, which the Compose stack runs on port 16686.
+
+```bash
+make trace TENANT=harbor      # latest graph run as a waterfall
+```
+
+```
+http POST /statements/…/run    █                                              5.3 ms
+  graph.run                    ███████████████████████████████████████    10393.5 ms
+    graph.load_context         █                                              7.6 ms
+    graph.verify_income        █                                              5.6 ms
+    graph.retrieve             ██████████████████                          4686.3 ms
+      rag.build_vector_store   █                                            369.6 ms
+      rag.retrieve              ████████████████                           4303.6 ms   329/83 tok    $0.0001
+    graph.narrate                                █████████████████████     5606.9 ms
+      llm.profile                                █████████████████████     5596.6 ms  2307/369 tok   $0.0095
+    graph.guardrails                                                  █       2.8 ms
+    graph.finalize                                                    █       6.5 ms
+```
+
+The request span is short because the response streams: the run's own
+span is the one that closes when the last event is sent, so a streamed run
+still ends up as one complete trace.
+
+`GET /statements/{id}/traces` lists traces per statement with duration, tokens
+and cost; `GET /traces/{id}` returns the spans as a tree. `GET /platform/prompts`
+is the registry of prompt versions and the models they ran against.
+`python -m evals.run_evals --with-llm` now prints p50 / p95 / p99 latency and
+cost per query for the grounded layer.
+
 
 ---
 

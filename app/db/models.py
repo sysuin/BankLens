@@ -380,6 +380,73 @@ class AuditEvent(TenantScoped, Base):
     )
 
 
+class Span(TenantScoped, Base):
+    """
+    One OpenTelemetry span, stored for the offline trace viewer.
+
+    Written by the span exporter as the owner role; read through the API
+    under RLS. Attributes never carry statement text, only ids and numbers.
+    """
+
+    __tablename__ = "spans"
+    __table_args__ = (
+        Index("ix_spans_trace", "trace_id"),
+        Index("ix_spans_run", "run_id"),
+        Index("ix_spans_statement", "statement_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    span_id: Mapped[str] = mapped_column(String(16), nullable=False)
+    parent_span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    request_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class PromptVersion(Base):
+    """
+    Registry of prompt versions seen in this deployment, with the model they
+    ran against. Global, not tenant-scoped: prompts are code, not data.
+    """
+
+    __tablename__ = "prompt_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_name", "version", "model", name="uq_prompt_version_model"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prompt_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    uses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 # Tables whose rows are tenant-owned and therefore carry an RLS policy.
 TENANT_TABLES = (
     "users",
@@ -391,4 +458,5 @@ TENANT_TABLES = (
     "runs",
     "decisions",
     "audit_events",
+    "spans",
 )

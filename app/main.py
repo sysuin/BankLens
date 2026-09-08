@@ -939,6 +939,51 @@ def main_api() -> None:
             ]
             st.dataframe(frame, use_container_width=True, hide_index=True)
 
+    with st.expander("⏱️ Traces: where the time and the money went", expanded=False):
+        try:
+            trace_rows = client.traces(detail["id"])
+        except ApiError as exc:
+            trace_rows = []
+            st.error(exc.detail)
+        if not trace_rows:
+            st.caption(
+                "No traces yet. Upload, run the graph or ask the chat something."
+            )
+        else:
+            labels = {
+                f"{t['started'][11:19]} · {t['root']} · {t['duration_ms']:.0f} ms · "
+                f"${t['cost_usd']:.4f} · {t['spans']} spans": t["trace_id"]
+                for t in trace_rows
+            }
+            picked = st.selectbox("Trace", list(labels), key="trace_pick")
+            try:
+                tr = client.trace(labels[picked])
+            except ApiError as exc:
+                tr = None
+                st.error(exc.detail)
+            if tr:
+                st.markdown(
+                    f"**{tr['total_ms']:.0f} ms** · {tr['tokens_in']} in / {tr['tokens_out']} out tokens · "
+                    f"**${tr['cost_usd']:.4f}** · trace `{tr['trace_id'][:12]}`"
+                )
+                st.code("\n".join(tr["waterfall"]), language="text")
+                rows = [
+                    {
+                        "span": ("  " * sp["depth"]) + sp["name"],
+                        "start ms": sp["offset_ms"],
+                        "duration ms": sp["duration_ms"],
+                        "model": sp["model"],
+                        "tokens in": sp["tokens_in"],
+                        "tokens out": sp["tokens_out"],
+                        "cost $": sp["cost_usd"],
+                        "status": sp["status"],
+                    }
+                    for sp in tr["spans"]
+                ]
+                st.dataframe(
+                    pd.DataFrame(rows), use_container_width=True, hide_index=True
+                )
+
     render_statement_views(
         metrics,
         categorized_df,

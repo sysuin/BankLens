@@ -40,6 +40,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://banklens_app:banklens_app@postgres:5432/banklens
       DATABASE_ADMIN_URL: postgresql+asyncpg://banklens_owner:banklens_owner@postgres:5432/banklens
       LOG_FORMAT: json
+      # Spans always land in the spans table; this also ships them to Jaeger.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     command: >
       sh -c "python -m alembic upgrade head
              && python -m app.db.seed
@@ -52,6 +54,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 15s
@@ -72,6 +76,16 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  jaeger:
+    # Trace viewer for the Compose stack: http://localhost:16686
+    image: jaegertracing/all-in-one:1.60
+    container_name: banklens_jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
 
 volumes:
   pgdata:

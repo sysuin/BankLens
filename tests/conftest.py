@@ -136,3 +136,17 @@ def upload_sample(
         )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+@pytest.fixture()
+def mocked_llm():
+    """Retrieval and narration replaced by fakes: no embeddings, no model."""
+    from unittest.mock import patch
+
+    from tests.test_graph import _fake_narrate_factory, _fake_retrieve
+
+    with (
+        patch("app.graph.nodes._retrieve_sync", side_effect=_fake_retrieve),
+        patch("app.graph.nodes._narrate_sync", side_effect=_fake_narrate_factory()),
+    ):
+        yield

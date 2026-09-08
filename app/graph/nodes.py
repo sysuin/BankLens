@@ -281,12 +281,26 @@ def route_after_review(state: GraphState) -> str:
 
 
 def _retrieve_sync(metrics: FinancialMetrics, tenant: str) -> list[dict]:
+    from langchain_community.callbacks.manager import get_openai_callback
+
     from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
+    from app.platform.tracing import set_llm_usage, span
 
     with tenant_scope(tenant):
-        return retrieve(
-            build_retrieval_query(metrics), build_vector_store(tenant), tenant=tenant
-        )
+        with span("rag.build_vector_store"):
+            store = build_vector_store(tenant)
+        with span("rag.retrieve") as current:
+            with get_openai_callback() as cb:
+                chunks = retrieve(build_retrieval_query(metrics), store, tenant=tenant)
+            # Multi-query rewrites run on the mini model; embeddings are
+            # fractions of a cent and are not counted here.
+            if cb.prompt_tokens or cb.completion_tokens:
+                set_llm_usage(
+                    settings.openai_mini_model, cb.prompt_tokens, cb.completion_tokens
+                )
+            current.set_attribute("rag.sources", sorted({c["source"] for c in chunks}))
+            current.set_attribute("rag.candidates", len(chunks))
+        return chunks
 
 
 async def retrieve(state: GraphState) -> dict[str, Any]:
@@ -321,11 +335,23 @@ def _narrate_sync(
 ) -> tuple[dict, bool, int, int]:
     from langchain_community.callbacks.manager import get_openai_callback
 
+    from app.api.service import prompt_version
     from app.pipeline.cache import cached_build_profile
+    from app.platform.tracing import set_llm_usage, span
 
     with tenant_scope(tenant):
-        with get_openai_callback() as cb:
-            profile, from_cache = cached_build_profile(metrics, chunks, tenant=tenant)
+        with span("llm.profile") as current:
+            with get_openai_callback() as cb:
+                profile, from_cache = cached_build_profile(
+                    metrics, chunks, tenant=tenant
+                )
+            set_llm_usage(
+                settings.openai_model,
+                cb.prompt_tokens,
+                cb.completion_tokens,
+                prompt_version=prompt_version(),
+            )
+            current.set_attribute("llm.cache_hit", from_cache)
     return (
         profile.model_dump(mode="json"),
         from_cache,
@@ -337,11 +363,15 @@ def _narrate_sync(
 async def narrate(state: GraphState) -> dict[str, Any]:
     from app.api.service import prompt_version
 
+    from app.platform import registry
+
     metrics = FinancialMetrics.model_validate(state["metrics"])
     async with audit.timed() as t:
         profile, from_cache, tokens_in, tokens_out = await asyncio.to_thread(
             _narrate_sync, metrics, state["chunks"], state["tenant"]
         )
+    if not from_cache:
+        await registry.register_use(settings.openai_model)
     await audit.set_run_status(
         state["tenant_id"], state["run_id"], RunStatus.running, current_node="narrate"
     )

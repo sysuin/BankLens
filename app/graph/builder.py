@@ -30,6 +30,13 @@ from app.db.models import Run, RunStatus
 from app.db.session import _resolve_urls, tenant_session
 from app.graph import audit, nodes
 from app.graph.state import GraphState
+from app.platform.tracing import (
+    ATTR_RUN_ID,
+    ATTR_STATEMENT_ID,
+    ATTR_TENANT,
+    ATTR_TENANT_ID,
+    span,
+)
 
 logger = get_logger(__name__)
 
@@ -71,17 +78,39 @@ async def close_checkpointer() -> None:
     _pool = _saver = None
 
 
+def _traced(name: str, fn):
+    """Wrap a node so it runs inside a span named graph.<node>."""
+
+    async def wrapped(state: GraphState):
+        with span(
+            f"graph.{name}",
+            **{
+                ATTR_TENANT: state.get("tenant"),
+                ATTR_TENANT_ID: state.get("tenant_id"),
+                ATTR_RUN_ID: state.get("run_id"),
+                ATTR_STATEMENT_ID: state.get("statement_id"),
+            },
+        ):
+            return await fn(state)
+
+    wrapped.__name__ = fn.__name__
+    return wrapped
+
+
 def build_graph():
     graph = StateGraph(GraphState)
-    graph.add_node("load_context", nodes.load_context)
-    graph.add_node("verify_income", nodes.verify_income)
-    graph.add_node("await_review", nodes.await_review)
-    graph.add_node("retrieve", nodes.retrieve)
-    graph.add_node("narrate", nodes.narrate)
-    graph.add_node("guardrails", nodes.guardrails)
-    graph.add_node("finalize", nodes.finalize)
-    graph.add_node("finalize_rejected", nodes.finalize_rejected)
-    graph.add_node("finalize_blocked", nodes.finalize_blocked)
+    for name, fn in (
+        ("load_context", nodes.load_context),
+        ("verify_income", nodes.verify_income),
+        ("await_review", nodes.await_review),
+        ("retrieve", nodes.retrieve),
+        ("narrate", nodes.narrate),
+        ("guardrails", nodes.guardrails),
+        ("finalize", nodes.finalize),
+        ("finalize_rejected", nodes.finalize_rejected),
+        ("finalize_blocked", nodes.finalize_blocked),
+    ):
+        graph.add_node(name, _traced(name, fn))
 
     graph.add_edge(START, "load_context")
     graph.add_edge("load_context", "verify_income")
@@ -192,8 +221,18 @@ async def start_run(
         "actor": actor_email,
     }
     try:
-        async for event in _stream(app, initial, _config(run_id)):
-            yield event
+        with span(
+            "graph.run",
+            **{
+                ATTR_TENANT: tenant,
+                ATTR_TENANT_ID: str(tenant_id),
+                ATTR_RUN_ID: str(run_id),
+                ATTR_STATEMENT_ID: str(statement_id),
+                "banklens.user": actor_email,
+            },
+        ):
+            async for event in _stream(app, initial, _config(run_id)):
+                yield event
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised as an event
         logger.exception("run %s failed", run_id)
         await audit.set_run_status(
@@ -230,8 +269,17 @@ async def resume_run(
         "reviewer_id": str(reviewer_id) if reviewer_id else None,
     }
     try:
-        async for event in _stream(app, Command(resume=answer), _config(run_id)):
-            yield event
+        with span(
+            "graph.resume",
+            **{
+                ATTR_TENANT_ID: str(tenant_id),
+                ATTR_RUN_ID: str(run_id),
+                "banklens.user": reviewer_email,
+                "review.action": action,
+            },
+        ):
+            async for event in _stream(app, Command(resume=answer), _config(run_id)):
+                yield event
     except Exception as exc:  # noqa: BLE001
         logger.exception("resume %s failed", run_id)
         await audit.set_run_status(

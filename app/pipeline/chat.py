@@ -171,12 +171,15 @@ def run_chat_turn(
             if requested is None:
                 result = f"Unknown tool: {call['name']}"
             else:
-                try:
-                    result = requested.invoke(call["args"])
-                except (
-                    Exception
-                ) as exc:  # noqa: BLE001 - the model should see tool errors
-                    result = f"Tool error: {exc}"
+                from app.platform.tracing import span
+
+                with span(f"tool.{call['name']}", **{"tool.round": round_index}):
+                    try:
+                        result = requested.invoke(call["args"])
+                    except (
+                        Exception
+                    ) as exc:  # noqa: BLE001 - the model should see tool errors
+                        result = f"Tool error: {exc}"
             messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
     else:
         note = "\n\n*(Stopped after the maximum number of tool rounds.)*"

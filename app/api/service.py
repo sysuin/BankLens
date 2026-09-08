@@ -79,11 +79,24 @@ def _parse_upload(filename: str, content: bytes) -> tuple[pd.DataFrame, SourceTy
 def _analyze_sync(
     filename: str, content: bytes, tenant_slug: str
 ) -> tuple[pd.DataFrame, FinancialMetrics, SourceType]:
+    from app.platform.tracing import span
+
     with tenant_scope(tenant_slug):
-        raw, source_type = _parse_upload(filename, content)
-        sanitized = sanitize_dataframe(raw)
-        categorized = categorize_dataframe(sanitized)
-        metrics = compute_metrics(categorized)
+        with span(
+            "pipeline.parse", **{"file.kind": filename.rsplit(".", 1)[-1].lower()}
+        ):
+            raw, source_type = _parse_upload(filename, content)
+        with span("pipeline.sanitize"):
+            sanitized = sanitize_dataframe(raw)
+        with span("pipeline.categorize") as current:
+            categorized = categorize_dataframe(sanitized)
+            current.set_attribute(
+                "pipeline.llm_fallback_rows",
+                int((categorized["category"] == "Others").sum()),
+            )
+        with span("pipeline.metrics") as current:
+            metrics = compute_metrics(categorized)
+            current.set_attribute("metrics.rows", int(metrics.transaction_count))
     return categorized, metrics, source_type
 
 
@@ -93,13 +106,29 @@ def _profile_sync(
     from app.pipeline.cache import cached_build_profile
     from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
 
+    from langchain_community.callbacks.manager import get_openai_callback
+
+    from app.platform.tracing import set_llm_usage, span
+
     with tenant_scope(tenant_slug):
-        chunks = retrieve(
-            build_retrieval_query(metrics),
-            build_vector_store(tenant_slug),
-            tenant=tenant_slug,
-        )
-        profile, from_cache = cached_build_profile(metrics, chunks, tenant=tenant_slug)
+        with span("rag.retrieve"):
+            chunks = retrieve(
+                build_retrieval_query(metrics),
+                build_vector_store(tenant_slug),
+                tenant=tenant_slug,
+            )
+        with span("llm.profile") as current:
+            with get_openai_callback() as cb:
+                profile, from_cache = cached_build_profile(
+                    metrics, chunks, tenant=tenant_slug
+                )
+            set_llm_usage(
+                settings.openai_model,
+                cb.prompt_tokens,
+                cb.completion_tokens,
+                prompt_version=prompt_version(),
+            )
+            current.set_attribute("llm.cache_hit", from_cache)
     return profile, chunks, from_cache
 
 
@@ -124,10 +153,42 @@ async def ingest_statement_file(
     content: bytes,
 ) -> uuid.UUID:
     """Parse, sanitize, categorize, compute, and store one statement."""
-    categorized, metrics, source_type = await asyncio.to_thread(
-        _analyze_sync, filename, content, tenant_slug
+    from app.platform.tracing import (
+        ATTR_STATEMENT_ID,
+        ATTR_TENANT,
+        ATTR_TENANT_ID,
+        span,
     )
 
+    with span(
+        "statement.ingest",
+        **{ATTR_TENANT: tenant_slug, ATTR_TENANT_ID: str(tenant_id)},
+    ) as ingest_span:
+        categorized, metrics, source_type = await asyncio.to_thread(
+            _analyze_sync, filename, content, tenant_slug
+        )
+        statement_id = await _persist_statement(
+            tenant_id,
+            customer_id,
+            uploaded_by,
+            filename,
+            source_type,
+            categorized,
+            metrics,
+        )
+        ingest_span.set_attribute(ATTR_STATEMENT_ID, str(statement_id))
+        return statement_id
+
+
+async def _persist_statement(
+    tenant_id: uuid.UUID,
+    customer_id: uuid.UUID,
+    uploaded_by: uuid.UUID | None,
+    filename: str,
+    source_type: SourceType,
+    categorized: pd.DataFrame,
+    metrics: FinancialMetrics,
+) -> uuid.UUID:
     async with tenant_session(tenant_id) as session:
         customer = await session.get(Customer, customer_id)
         if customer is None:

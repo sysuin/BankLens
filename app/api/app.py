@@ -18,12 +18,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, customers, health, reviews, statements
+from app.api.routes import auth, customers, health, reviews, statements, traces
 from app.api.security import assert_secret_is_safe_for
 from app.core import context
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.db.session import dispose_engines
+from app.platform.tracing import ATTR_REQUEST_ID, setup_tracing, shutdown_tracing, span
 
 logger = get_logger(__name__)
 
@@ -31,6 +32,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     assert_secret_is_safe_for(settings.banklens_env)
+    setup_tracing()
     logger.info(
         "BankLens API starting env=%s default_tenant=%s",
         settings.banklens_env,
@@ -41,6 +43,7 @@ async def lifespan(_: FastAPI):
 
     await close_checkpointer()
     await dispose_engines()
+    shutdown_tracing()
     logger.info("BankLens API stopped")
 
 
@@ -63,7 +66,23 @@ def create_app() -> FastAPI:
         )
         started = time.perf_counter()
         try:
-            response = await call_next(request)
+            # The request span. Streaming endpoints (run, review, chat) open
+            # their own longer-lived spans that carry the tenant; this one
+            # records the HTTP envelope.
+            with span(
+                f"http {request.method} {request.url.path}",
+                **{ATTR_REQUEST_ID: request_id},
+                **{"http.method": request.method, "http.path": request.url.path},
+            ) as current:
+                response = await call_next(request)
+                current.set_attribute("http.status_code", response.status_code)
+                principal = getattr(request.state, "principal", None)
+                if principal is not None:
+                    current.set_attribute("banklens.tenant", principal.tenant)
+                    current.set_attribute(
+                        "banklens.tenant_id", str(principal.tenant_id)
+                    )
+                    current.set_attribute("banklens.user", principal.email)
         except Exception:
             logger.exception("Unhandled error %s %s", request.method, request.url.path)
             response = JSONResponse(
@@ -92,6 +111,7 @@ def create_app() -> FastAPI:
     application.include_router(customers.router)
     application.include_router(statements.router)
     application.include_router(reviews.router)
+    application.include_router(traces.router)
     return application
 
 

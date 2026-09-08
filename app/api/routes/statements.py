@@ -159,6 +159,18 @@ async def list_runs(
     return [RunOut(**row) for row in rows]
 
 
+@router.get("/{statement_id}/traces")
+async def statement_traces(
+    statement_id: uuid.UUID, principal: Principal = Depends(current_user)
+) -> list[dict]:
+    from app.api import traces
+
+    try:
+        return await traces.list_traces(principal.tenant_id, statement_id)
+    except service.NotFound:
+        raise _not_found()
+
+
 @router.get("/{statement_id}/audit", response_model=list[AuditEventOut])
 async def statement_audit(
     statement_id: uuid.UUID, principal: Principal = Depends(current_user)
@@ -203,14 +215,39 @@ async def chat(
     tenant = principal.tenant
 
     def produce() -> None:
+        from langchain_community.callbacks.manager import get_openai_callback
+
+        from app.core.config import settings
         from app.pipeline.chat import run_chat_turn
+        from app.platform.tracing import (
+            ATTR_STATEMENT_ID,
+            ATTR_TENANT,
+            ATTR_TENANT_ID,
+            set_llm_usage,
+            span,
+        )
 
         try:
             with tenant_scope(tenant, user=principal.email):
-                for chunk in run_chat_turn(
-                    body.question, history, metrics, df, tenant=tenant
+                with span(
+                    "llm.chat_turn",
+                    **{
+                        ATTR_TENANT: tenant,
+                        ATTR_TENANT_ID: str(principal.tenant_id),
+                        ATTR_STATEMENT_ID: str(statement_id),
+                        "chat.history_turns": len(history),
+                    },
                 ):
-                    loop.call_soon_threadsafe(queue.put_nowait, ("token", chunk))
+                    with get_openai_callback() as cb:
+                        for chunk in run_chat_turn(
+                            body.question, history, metrics, df, tenant=tenant
+                        ):
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait, ("token", chunk)
+                            )
+                    set_llm_usage(
+                        settings.openai_model, cb.prompt_tokens, cb.completion_tokens
+                    )
             final = history[-1].content if history else ""
             loop.call_soon_threadsafe(queue.put_nowait, ("done", final))
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as an event

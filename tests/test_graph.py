@@ -50,15 +50,6 @@ def _fake_narrate_factory(primary="Fixed Deposit", secondary="Savings Account"):
     return _fake_narrate
 
 
-@pytest.fixture()
-def mocked_llm():
-    with (
-        patch("app.graph.nodes._retrieve_sync", side_effect=_fake_retrieve),
-        patch("app.graph.nodes._narrate_sync", side_effect=_fake_narrate_factory()),
-    ):
-        yield
-
-
 def sse_events(
     client, method: str, url: str, headers: dict, json_body=None
 ) -> list[dict]:

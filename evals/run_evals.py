@@ -31,18 +31,70 @@ def evaluate_deterministic(case: EvalCase) -> list[CheckResult]:
     )
 
 
+# Per-case latency (ms) and cost (USD) of the grounded layer, for the report.
+LATENCY_MS: list[float] = []
+COST_USD: list[float] = []
+
+
+def percentile(values: list[float], q: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    k = (len(ordered) - 1) * q
+    lo, hi = int(k), min(int(k) + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
+def report_latency_and_cost() -> None:
+    """p50/p95/p99 latency and cost per query for the grounded layer."""
+    if not LATENCY_MS:
+        return
+    n = len(LATENCY_MS)
+    print(f"\nLatency & cost — grounded layer, n={n} (retrieve + profile, cache off)")
+    print(f"{'p50':<8}{percentile(LATENCY_MS, 0.5):>10.0f} ms")
+    print(f"{'p95':<8}{percentile(LATENCY_MS, 0.95):>10.0f} ms")
+    print(f"{'p99':<8}{percentile(LATENCY_MS, 0.99):>10.0f} ms")
+    print(f"{'cost':<8}{sum(COST_USD) / n:>10.4f} USD per query (mean)")
+    print(f"{'total':<8}{sum(COST_USD):>10.4f} USD for this run")
+
+
 def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
     """Run layer 2 for a single case. Requires an API key; costs money."""
     from app.pipeline.agent import build_profile
     from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
+
+    import time
+
+    from langchain_community.callbacks.manager import get_openai_callback
+
+    from app.core.config import settings
+    from app.platform.pricing import cost_usd
 
     frame = materialize(case)
     metrics = compute_metrics(categorize_rules_only(frame))
 
     # Same query builder the app uses — an eval that constructs its own query
     # measures a retrieval path that does not exist in production.
-    chunks = retrieve(build_retrieval_query(metrics), build_vector_store())
-    profile = build_profile(metrics, chunks)
+    # Latency and cost are recorded per case so the report can print
+    # percentiles: an eval that only scores quality hides the bill.
+    started = time.perf_counter()
+    with get_openai_callback() as cb_retrieve:
+        chunks = retrieve(build_retrieval_query(metrics), build_vector_store())
+    with get_openai_callback() as cb_profile:
+        profile = build_profile(metrics, chunks)
+    LATENCY_MS.append((time.perf_counter() - started) * 1000)
+    COST_USD.append(
+        cost_usd(
+            settings.openai_mini_model,
+            cb_retrieve.prompt_tokens,
+            cb_retrieve.completion_tokens,
+        )
+        + cost_usd(
+            settings.openai_model,
+            cb_profile.prompt_tokens,
+            cb_profile.completion_tokens,
+        )
+    )
 
     results = run_grounded_checks(profile, metrics, case.forbidden_products)
 
@@ -285,6 +337,7 @@ def main() -> int:
                 rows.append(
                     (case.case_id, CheckResult("grounded_layer_ran", False, str(exc)))
                 )
+        report_latency_and_cost()
 
     return 1 if print_scorecard(rows) else 0
 

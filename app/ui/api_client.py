@@ -138,6 +138,12 @@ class BankLensClient:
     def audit(self, statement_id: str) -> list[dict]:
         return self._get(f"/statements/{statement_id}/audit")
 
+    def traces(self, statement_id: str) -> list[dict]:
+        return self._get(f"/statements/{statement_id}/traces")
+
+    def trace(self, trace_id: str) -> dict:
+        return self._get(f"/traces/{trace_id}")
+
     def reviews(self, state: str = "pending") -> list[dict]:
         return self._get(f"/reviews?state={state}")
 
