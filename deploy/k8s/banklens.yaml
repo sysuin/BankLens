@@ -1,0 +1,138 @@
+# BankLens Platform on Kubernetes — a manifest, not what runs in production.
+#
+# Production today is one EC2 host running the container from ECR behind
+# nginx (see .github/workflows/ci_cd.yml). This file is what the same image
+# looks like as three Deployments (API, worker, console) against an
+# external Postgres, so the shape is reviewable. It has been validated with
+# `kubectl apply --dry-run=client -f deploy/k8s/banklens.yaml` only.
+#
+# Secrets (OPENAI_API_KEY, DATABASE_*_URL, JWT_SECRET) come from a Secret
+# named `banklens-secrets` created outside this file.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banklens
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banklens-config
+  namespace: banklens
+data:
+  BANKLENS_ENV: production
+  LOG_FORMAT: json
+  LLM_PROVIDER: auto
+  TRACING_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+  TENANT_DAILY_BUDGET_USD: "2.0"
+  RATE_LIMIT_PER_MINUTE: "120"
+  WORKER_CONCURRENCY: "2"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banklens-api
+  namespace: banklens
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: banklens, tier: api }
+  template:
+    metadata:
+      labels: { app: banklens, tier: api }
+    spec:
+      initContainers:
+        - name: migrate
+          image: ghcr.io/sysuin/banklens:latest
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: { name: banklens-config }
+            - secretRef: { name: banklens-secrets }
+      containers:
+        - name: api
+          image: ghcr.io/sysuin/banklens:latest
+          command: ["uvicorn", "app.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: banklens-config }
+            - secretRef: { name: banklens-secrets }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banklens-api
+  namespace: banklens
+spec:
+  selector: { app: banklens, tier: api }
+  ports: [{ port: 80, targetPort: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banklens-worker
+  namespace: banklens
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: banklens, tier: worker }
+  template:
+    metadata:
+      labels: { app: banklens, tier: worker }
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/sysuin/banklens:latest
+          command: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef: { name: banklens-config }
+            - secretRef: { name: banklens-secrets }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banklens-console
+  namespace: banklens
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: banklens, tier: console }
+  template:
+    metadata:
+      labels: { app: banklens, tier: console }
+    spec:
+      containers:
+        - name: console
+          image: ghcr.io/sysuin/banklens:latest
+          ports: [{ containerPort: 8501 }]
+          env:
+            - name: BANKLENS_API_URL
+              value: http://banklens-api
+          envFrom:
+            - configMapRef: { name: banklens-config }
+            - secretRef: { name: banklens-secrets }
+          readinessProbe:
+            httpGet: { path: /_stcore/health, port: 8501 }
+            initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banklens-console
+  namespace: banklens
+spec:
+  selector: { app: banklens, tier: console }
+  ports: [{ port: 80, targetPort: 8501 }]

@@ -4,6 +4,8 @@
 docs/*
 !docs/discovery.md
 !docs/numbers_card.md
+!docs/governance/
+!docs/governance/*.md
 .claude/
 *_summary.txt
 

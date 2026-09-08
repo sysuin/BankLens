@@ -11,7 +11,7 @@ from app.pipeline.rag import list_tenants
 
 router = APIRouter(tags=["health"])
 
-VERSION = "0.2.0-phase1"
+VERSION = "1.0.0"
 
 
 @router.get("/health", response_model=HealthResponse)

@@ -6,27 +6,28 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 
 | Number | Baseline (Phase 0) | After Phase 7 | Command / source |
 | --- | --- | --- | --- |
-| Golden-set pass rate, deterministic layer | **65 / 65** (4 checks × 65 cases, 0 failures) | | `python -m evals.run_evals` |
-| Grounded layer, sampled | **6 cases**: credit_guardrail 6/6, products_are_real 6/6, retrieval_supports_recommendation 6/6, sources_present 6/6, percentages_supported 5/6 (advisory) | | `python -m evals.run_evals --with-llm` |
-| Judge groundedness | not run this pass (advisory layer; costs money) | | `--with-llm --judge` |
-| Retrieval hit@4 / MRR / nDCG / precision, hybrid, no reranker | **1.000 / 0.377 / 0.879 / 0.335** at candidate k=15; **harmful 0.400** on deficit cases | | `--retrieval-ab` (2026-08 run, see memory note); BM25-only half: hit@4 0.677, hit@15 1.000 |
-| Reranker effect (why it ships off) | hit 1.000 → 0.923, harmful 0.400 → 0.908 | | `--retrieval-ab` |
+| Golden-set pass rate, deterministic layer | **65 / 65** (4 checks × 65 cases, 0 failures) | **65 / 65**, unchanged through every phase (runs in CI on every push) | `python -m evals.run_evals` |
+| Grounded layer, sampled | **6 cases**: credit_guardrail 6/6, products_are_real 6/6, retrieval_supports_recommendation 6/6, sources_present 6/6, percentages_supported 5/6 (advisory) | hosted **6/6 on all five checks** (advisory percentages 6/6 this pass); local qwen2.5:3b 6/6 on the four blocking checks, 0/6 advisory | `python -m evals.run_evals --with-llm` |
+| Judge groundedness | not run this pass (advisory layer; costs money) | still advisory; not part of the gate | `--with-llm --judge` |
+| Retrieval hit@4 / MRR / nDCG / precision, hybrid, no reranker | **1.000 / 0.377 / 0.879 / 0.335** at candidate k=15; **harmful 0.400** on deficit cases | unchanged (retrieval code untouched; index now per tenant) | `--retrieval-ab` (2026-08 run, see memory note); BM25-only half: hit@4 0.677, hit@15 1.000 |
+| Reranker effect (why it ships off) | hit 1.000 → 0.923, harmful 0.400 → 0.908 | unchanged; documented in `app/core/config.py` | `--retrieval-ab` |
 | p50 / p95 full analysis, hosted | **8.2 s / 14.6 s** (min 7.2, max 17.0; n = 10 runs, 5 files × 2) | **p50 8.5 s / p95 12.5 s / p99 13.6 s** on the grounded eval layer (n = 6, cache off), now printed by the eval runner | `PROFILE_CACHE_ENABLED=false python -m evals.run_evals --with-llm` |
-| Where the time goes (p50) | profile 5.2 s · retrieve 2.6 s (multi-query rewrites + embed + fuse) · everything else < 10 ms | | same |
+| Where the time goes (p50) | profile 5.2 s · retrieve 2.6 s (multi-query rewrites + embed + fuse) · everything else < 10 ms | the same split, now visible per span in `make trace`; numeric chat questions moved to 2–11 ms SQL templates | same |
 | Cost per statement, hosted | **$0.0098** (p50; max $0.0101) | **$0.0097 per query** (eval runner, mean of 6); **$0.0096** on a traced live run (2,636 in / 452 out tokens) | eval runner; `make trace` |
-| Where the money goes | profile 99.0 % (≈2,375 in / 379 out tokens on gpt-4o) · retrieve 1.0 % (gpt-4o-mini rewrites) · categorize 0.0 % | | same |
-| Categorizer LLM fallback | **0 rows** on all sample statements (rules matched everything) | | same, `llm_fallback_rows` |
-| Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | | `docs/06_llmops_production_and_cost.md` |
-| Vector store warm start | 1.3 s (fingerprint match, no re-embed) | | same script |
-| Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **392 passed** in 20 files, 73 s (boots a throwaway Postgres) | `python -m pytest -q` |
-| Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | | `wc -l` |
+| Where the money goes | profile 99.0 % (≈2,375 in / 379 out tokens on gpt-4o) · retrieve 1.0 % (gpt-4o-mini rewrites) · categorize 0.0 % | the same split; every span carries tokens and dollars, summed per trace, per job and per tenant per day | same |
+| Categorizer LLM fallback | **0 rows** on all sample statements (rules matched everything) | 0 rows on clean statements; neutralised rows are excluded from the fallback (found by a trace in Phase 5) | same, `llm_fallback_rows` |
+| Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | cache hit skips the whole profile span; keyed by computed inputs, shared across processes, tenant-scoped | `docs/06_llmops_production_and_cost.md` |
+| Vector store warm start | 1.3 s (fingerprint match, no re-embed) | unchanged, per tenant | same script |
+| Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | unchanged; stated in `docs/governance/DATA_RETENTION.md` | `data/sample_4_scanned_statement.pdf` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **402 passed** in 21 files, ≈75 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | ≈19,400 lines across `app/`, `evals/`, `scripts/`, `tests/`, `mcp_server.py`; 18 knowledge-base documents in two tenants | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a | **100 % of 43 attacks blocked, 0 % false positives on 37 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
+| Bias check (demographic rewrites) | n/a | **65 statements × 5 groups: risk band and score identical in every case; guardrail flags equal** | `make bias` |
 | Bulk throughput and cost | n/a | **50 statements in 8.5 s worker time (356.7/min), p50 36 ms, p95 1.6 s, $0 (ingest only, concurrency 2)** | `make load` |
 | Tenant isolation test | n/a | **7 tests in `tests/test_tenancy.py` + `make prove-isolation` (RLS on → nothing; RLS off → row leaks; on → nothing)** | `make prove-isolation` |
-| Local-model golden pass rate | n/a | see Phase 4 findings (`make compare`) | `make compare` |
-| Minutes saved per statement | ~20 min manual (assumption, `docs/discovery.md`) | | |
+| Local-model golden pass rate | n/a | **4/4 blocking checks at 6/6; advisory 0/6; p50 34.9 s; $0** (Phase 4 table) | `make compare` |
+| Minutes saved per statement | ~20 min manual (assumption, `docs/discovery.md`) | still an assumption; the platform now records what a real pilot would need to measure it (run and decision timestamps, query log) | |
 
 ## Phase 1 findings (2026-09-08)
 
@@ -87,12 +88,21 @@ What the table says, said out loud: the 3B local model passes every **blocking**
 - **Order matters.** The scope gate must judge the user's words, not the redaction markers: "account 123…" became "[REDACTED_PHONE]" and the gate counted the marker as unknown. Injection → router → scope is the order now.
 - Ten templates, eight metrics, four views; every template validated against the SQL allow-list at import.
 
+## Phase 7 findings (2026-09-08)
+
+- **The bias check found nothing, and that is the finding.** 65 golden statements rewritten for five groups (name tokens on income lines, local merchant spellings): identical risk band and health score in all 325 runs, zero guardrail flags in every group. It runs with no model, so it is in CI on every push and costs nothing.
+- **Governance is three short documents and a test.** Responsible AI note (what the model decides: nothing; what it narrates; oversight; kill switches), model card (per job, hosted and local, with the eval table), data-retention table (every table, whether it holds PII, what leaves the boundary). `tests/test_docs.py` fails if they lose the required sections or if the README's coverage table names a file that does not exist.
+- **The interview script is eight minutes and every step is a command.** Twelve concepts from the market scan, each with a file and the line to point at.
+- **Kubernetes and Terraform are stubs and say so.** The manifest is the same image as three deployments against an external Postgres; the Terraform file is the single host plus registry and a 30 GB disk (the full-disk deploy of August is why). Neither is what runs in production; both parse.
+- `CLAUDE.md` describes the doctrines and `make gate` so a coding agent works inside the same rules I do.
+
 ## Caveats I say out loud
 
-- Ten timed runs is enough for a baseline, not for a p99. Phase 3 tracing will give real percentiles.
+- Latency percentiles come from six-case eval runs and single live traces, not from load at scale. The load test measures ingest, which never calls a model.
 - Cost uses list prices and callback token counts; embeddings are omitted (fractions of a cent).
 - The sample statements are clean, so the categorizer never called the model. Real statements will.
 - The retrieval numbers are from the golden queries, not from real RM queries.
-- Everything here is single-tenant, single-user, no auth, no queue: the "before" picture on purpose.
+- The bias check proves the deterministic layer ignores names and spellings. It says nothing about the narrative text, which a judge would have to score.
+- Two synthetic banks, seven synthetic customers: mechanism is proved, accuracy on real data is not.
 
 Raw runs: `evals/baseline/baseline_runs.json`.

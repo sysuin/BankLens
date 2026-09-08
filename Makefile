@@ -16,7 +16,7 @@ PY ?= .venv311/bin/python
 UVICORN ?= .venv311/bin/uvicorn
 STREAMLIT ?= .venv311/bin/streamlit
 
-.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare redteam
+.PHONY: db db-stop migrate seed api ui test evals lint prove-isolation baseline trace worker load compare redteam bias gate
 
 db:
 	$(PY) -c "from app.db.local import ensure_local_cluster, cluster_dir; ensure_local_cluster(); print('Postgres running at', cluster_dir())"
@@ -87,3 +87,11 @@ trace:
 # below the thresholds. No model calls, so it runs on every push in CI.
 redteam:
 	$(PY) -m evals.redteam.run
+
+# Bias check: demographic rewrites of every golden statement must give
+# identical risk bands and scores, and equal guardrail flags. Free.
+bias:
+	$(PY) -m evals.bias_check
+
+# The whole gate a change must pass before it is called done.
+gate: lint test evals redteam bias
