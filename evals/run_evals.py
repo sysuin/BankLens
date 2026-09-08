@@ -67,7 +67,6 @@ def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
 
     from langchain_community.callbacks.manager import get_openai_callback
 
-    from app.core.config import settings
     from app.platform.pricing import cost_usd
 
     frame = materialize(case)
@@ -83,18 +82,24 @@ def evaluate_grounded(case: EvalCase, use_judge: bool) -> list[CheckResult]:
     with get_openai_callback() as cb_profile:
         profile = build_profile(metrics, chunks)
     LATENCY_MS.append((time.perf_counter() - started) * 1000)
-    COST_USD.append(
-        cost_usd(
-            settings.openai_mini_model,
-            cb_retrieve.prompt_tokens,
-            cb_retrieve.completion_tokens,
+    # Price by the provider that actually served the call: a local model's
+    # tokens cost nothing, and the mini/primary model names differ per provider.
+    from app.platform import gateway
+
+    spec = gateway.choose("primary").spec
+    if spec.cost_free:
+        COST_USD.append(0.0)
+    else:
+        COST_USD.append(
+            cost_usd(
+                spec.mini_model,
+                cb_retrieve.prompt_tokens,
+                cb_retrieve.completion_tokens,
+            )
+            + cost_usd(
+                spec.model, cb_profile.prompt_tokens, cb_profile.completion_tokens
+            )
         )
-        + cost_usd(
-            settings.openai_model,
-            cb_profile.prompt_tokens,
-            cb_profile.completion_tokens,
-        )
-    )
 
     results = run_grounded_checks(profile, metrics, case.forbidden_products)
 

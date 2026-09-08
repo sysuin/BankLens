@@ -58,7 +58,9 @@ def run_for(provider: str, use_judge: bool) -> dict:
     n = len(run_evals.LATENCY_MS)
     return {
         "provider": provider,
-        "model": settings.ollama_model if provider == "ollama" else settings.openai_model,
+        "model": (
+            settings.ollama_model if provider == "ollama" else settings.openai_model
+        ),
         "cases": len(sampled),
         "errors": errors,
         "checks": {k: (passed[k], total[k]) for k in sorted(total)},
@@ -71,7 +73,9 @@ def run_for(provider: str, use_judge: bool) -> dict:
 def print_table(rows: list[dict]) -> None:
     names = sorted({k for r in rows for k in r["checks"]})
     width = 34
-    header = f"{'':<{width}}" + "".join(f"{r['provider'] + ' (' + r['model'] + ')':>26}" for r in rows)
+    header = f"{'':<{width}}" + "".join(
+        f"{r['provider'] + ' (' + r['model'] + ')':>26}" for r in rows
+    )
     print("\nGolden suite, grounded layer, side by side\n")
     print(header)
     print("-" * len(header))

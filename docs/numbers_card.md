@@ -53,7 +53,22 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 - **Zero-key path works end to end.** With `OPENAI_API_KEY` empty the gateway runs on `qwen2.5:3b` + `nomic-embed-text` (Ollama, 8 GB laptop): Meridian index built in 23 s, retrieval 6.9 s, profile 26.7 s, and the 3B model produced a profile that passed catalogue validation ("Sweep-In Fixed Deposit" / "Recurring Deposit").
 - **Bulk ingest is cheap and fast**: 50 synthetic statements, worker concurrency 2, 8.5 s, p50 36 ms per statement, no model calls, so $0.
 - **Budget enforcement reads the same table tracing writes.** `GET /platform/gateway` after the day's runs: spent $0.0096 of $2.00, would use `openai` (primary), both circuits closed.
-- Side-by-side golden suite: see the table appended below once `make compare` has run.
+- Side-by-side golden suite: table below.
+
+### Side by side: the same golden suite on two providers (`make compare`, 2026-09-08)
+
+| Check (grounded layer, 6 sampled cases) | OpenAI gpt-4o | Ollama qwen2.5:3b (local, 8 GB laptop) |
+|---|---:|---:|
+| credit_guardrail | 6/6 | 6/6 |
+| products_are_real | 6/6 | 6/6 |
+| retrieval_supports_recommendation | 6/6 | 6/6 |
+| sources_present | 6/6 | 6/6 |
+| percentages_supported (advisory) | 6/6 | **0/6** |
+| cases with errors | 0 | 0 |
+| p50 / p95 latency | 8.5 s / 12.0 s | **34.9 s / 50.4 s** |
+| cost per query | $0.0096 | $0 (the first run mis-priced local tokens at OpenAI rates, showing $0.0115; fixed in `evals/run_evals.py`) |
+
+What the table says, said out loud: the 3B local model passes every **blocking** check, including the credit guardrail and catalogue validation, so the zero-key demo is safe to show. It fails the advisory "quotes the exact percentages" check on every case and is four times slower. That is the honest price of running without a key, and it is a number, not a guess.
 
 ## Caveats I say out loud
 

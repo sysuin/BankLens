@@ -192,6 +192,13 @@ make evals PROVIDER=ollama     # grounded layer on the local model, no API key
 make compare                   # the same suite on both providers, side by side
 ```
 
+Measured on this laptop (grounded layer, six sampled cases): the local 3B model
+passes every blocking check (credit guardrail, real products, retrieval
+supports the recommendation, sources present) but fails the advisory
+"quotes the exact percentages" check on all six, at p50 34.9 s against
+8.5 s for gpt-4o and $0 against $0.0096 per query. The same suite, two
+providers, one table.
+
 **Bulk work.** `POST /jobs` enqueues a statement (kind `ingest` or
 `ingest_and_run`); `python -m app.worker` claims jobs with
 `SELECT … FOR UPDATE SKIP LOCKED`, leases them, and records duration and cost
