@@ -108,6 +108,44 @@ class BankLensClient:
                 return None
             raise
 
+    # ── decision graph ───────────────────────────────────────────────────────
+
+    def _sse(self, method: str, path: str, json_body=None) -> Iterator[dict]:
+        """Yield SSE events as dicts: {"event": kind, ...payload}."""
+        with httpx.stream(
+            method,
+            f"{self.base_url}{path}",
+            headers=self._headers(),
+            json=json_body,
+            timeout=self.timeout,
+        ) as response:
+            self._raise(response)
+            kind = None
+            for line in response.iter_lines():
+                if line.startswith("event: "):
+                    kind = line[7:].strip()
+                elif line.startswith("data: "):
+                    payload = json.loads(line[6:])
+                    body = payload if isinstance(payload, dict) else {"data": payload}
+                    yield {"event": kind, **body}
+
+    def run_graph(self, statement_id: str) -> Iterator[dict]:
+        return self._sse("POST", f"/statements/{statement_id}/run")
+
+    def runs(self, statement_id: str) -> list[dict]:
+        return self._get(f"/statements/{statement_id}/runs")
+
+    def audit(self, statement_id: str) -> list[dict]:
+        return self._get(f"/statements/{statement_id}/audit")
+
+    def reviews(self, state: str = "pending") -> list[dict]:
+        return self._get(f"/reviews?state={state}")
+
+    def decide(self, decision_id: str, action: str, note: str | None) -> Iterator[dict]:
+        return self._sse(
+            "POST", f"/reviews/{decision_id}", {"action": action, "note": note}
+        )
+
     # ── chat (SSE) ───────────────────────────────────────────────────────────
 
     def chat(

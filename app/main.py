@@ -561,6 +561,67 @@ def main() -> None:
 # from what the API returns. The pipeline never runs in this process.
 
 
+def _render_review_queue(client, tenant: str) -> None:
+    """Reviewer console: pending income-verification decisions for this bank."""
+    from app.ui.api_client import ApiError
+
+    st.markdown("#### 🛂 Review queue")
+    try:
+        pending = client.reviews("pending")
+    except ApiError as exc:
+        st.error(exc.detail)
+        return
+    if not pending:
+        st.success("Nothing waiting for review.")
+        return
+    for d in pending:
+        with st.container(border=True):
+            st.markdown(
+                f"**{d['customer_name']}** (`{d['customer_ref']}`) · declared "
+                f"₹{d['declared_monthly_income']:,.0f} vs observed "
+                f"₹{d['observed_monthly_income']:,.0f} · **{d['discrepancy_pct']:.1f}%** "
+                f"off (threshold {d['threshold_pct']:.0f}%)"
+            )
+            note = st.text_input(
+                "Note", key=f"note_{d['id']}", placeholder="e.g. payslips received"
+            )
+            col_a, col_b = st.columns(2)
+            action = None
+            if col_a.button(
+                "Approve",
+                key=f"approve_{d['id']}",
+                type="primary",
+                use_container_width=True,
+            ):
+                action = "approve"
+            if col_b.button(
+                "Reject", key=f"reject_{d['id']}", use_container_width=True
+            ):
+                action = "reject"
+            if action:
+                with st.status(
+                    f"Resuming run from its checkpoint ({action})…", expanded=True
+                ) as status:
+                    try:
+                        for ev in client.decide(d["id"], action, note or None):
+                            if ev.get("event") == "node":
+                                st.write(f"✅ {ev.get('node')}")
+                            elif ev.get("event") == "error":
+                                st.write(f"❌ {ev.get('data')}")
+                        status.update(
+                            label="Run resumed and finished",
+                            state="complete",
+                            expanded=False,
+                        )
+                    except ApiError as exc:
+                        status.update(label="Resume failed", state="error")
+                        st.error(exc.detail)
+                ss = st.session_state
+                ss.ai_profile = None
+                ss.profile_for = None
+                st.rerun()
+
+
 def main_api() -> None:
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -730,22 +791,94 @@ def main_api() -> None:
         if existing:
             ss.ai_profile = profile_from_response(existing, tenant)
 
+    NODE_LABELS = {
+        "load_context": "Loaded metrics and the declared income",
+        "verify_income": "Compared declared vs observed income",
+        "await_review": "Reviewer decided",
+        "retrieve": "Retrieved product passages",
+        "narrate": "Model wrote the narrative",
+        "guardrails": "Guardrails checked the recommendation",
+        "finalize": "Profile stored",
+        "finalize_rejected": "Run ended: income verification rejected",
+        "finalize_blocked": "Run ended: guardrail blocked the recommendation",
+    }
+
+    def _render_events(events, box) -> str | None:
+        """Render graph events as they arrive; return the run's final state."""
+        outcome = None
+        for ev in events:
+            kind = ev.get("event")
+            data = ev.get("data", {}) if isinstance(ev.get("data"), dict) else {}
+            if kind == "node":
+                node = ev.get("node", "?")
+                line = f"✅ **{NODE_LABELS.get(node, node)}**"
+                if node == "verify_income":
+                    line += (
+                        f" — declared ₹{ss.get('_declared', 0):,.0f}, "
+                        f"discrepancy {data.get('discrepancy_pct', 0):.1f}%"
+                        + (
+                            " → **review required**"
+                            if data.get("review_required")
+                            else " → cleared"
+                        )
+                    )
+                elif node == "retrieve":
+                    line += f" — {', '.join(data.get('sources', []))}"
+                elif node == "narrate":
+                    line += (
+                        f" — {data.get('tokens_in', 0)} in / {data.get('tokens_out', 0)} out tokens"
+                        + (" (cache)" if data.get("from_cache") else "")
+                    )
+                elif node == "guardrails":
+                    if data.get("guardrail_violations"):
+                        line += " — **blocked**: " + "; ".join(
+                            data["guardrail_violations"]
+                        )
+                    elif data.get("guardrail_warnings"):
+                        line += " — warnings: " + "; ".join(data["guardrail_warnings"])
+                elif node == "await_review":
+                    line += f" — {data.get('review_decision')}"
+                if data.get("outcome"):
+                    outcome = data["outcome"]
+                box.write(line)
+            elif kind == "interrupt":
+                outcome = "awaiting_review"
+                box.write(
+                    "⏸️ **Paused for a human.** Observed income differs from the declared "
+                    "income by more than the threshold. A reviewer must approve or reject "
+                    "before any recommendation is written. The run is checkpointed in "
+                    "Postgres and resumes from here, even after a restart."
+                )
+            elif kind == "error":
+                outcome = "error"
+                box.write(f"❌ {ev.get('data')}")
+        return outcome
+
     def generate_profile():
-        with st.status("Running the AI pipeline on the API…", expanded=True) as status:
-            st.write("retrieve → narrate → validate → store")
+        ss["_declared"] = detail["declared_monthly_income"]
+        with st.status("Running the decision graph…", expanded=True) as status:
             try:
-                body = client.generate_profile(detail["id"])
+                outcome = _render_events(client.run_graph(detail["id"]), st)
             except ApiError as exc:
-                status.update(label="❌ Profile generation failed", state="error")
+                status.update(label="❌ Run failed", state="error")
                 st.error(exc.detail)
                 return None
-            st.write(
-                f"Model `{body['model']}` · prompt `{body['prompt_version']}` · "
-                f"sources `{body['retrieved_sources']}`"
-                + (" · ⚡ served from cache" if body["from_cache"] else "")
-            )
-            status.update(label="✨ Profile stored", state="complete", expanded=False)
-            return profile_from_response(body, tenant)
+            if outcome == "completed":
+                status.update(
+                    label="✨ Profile stored", state="complete", expanded=False
+                )
+                latest = client.latest_profile(detail["id"])
+                return profile_from_response(latest, tenant) if latest else None
+            if outcome == "awaiting_review":
+                status.update(
+                    label="⏸️ Awaiting reviewer", state="complete", expanded=True
+                )
+                st.info(
+                    "Sign in as the reviewer to decide. The run resumes from its checkpoint."
+                )
+                return None
+            status.update(label=f"Run ended: {outcome}", state="error", expanded=True)
+            return None
 
     def chat_stream(question: str):
         history = [
@@ -766,6 +899,46 @@ def main_api() -> None:
         f"Customer **{detail['customer_name']}** · declared monthly income "
         f"₹{detail['declared_monthly_income']:,.0f} · statement `{detail['id'][:8]}`"
     )
+
+    if not is_rm:
+        _render_review_queue(client, tenant)
+
+    with st.expander(
+        "🧾 Decision runs and audit trail for this statement", expanded=False
+    ):
+        try:
+            runs = client.runs(detail["id"])
+            trail = client.audit(detail["id"])
+        except ApiError as exc:
+            runs, trail = [], []
+            st.error(exc.detail)
+        if runs:
+            st.dataframe(
+                pd.DataFrame(runs)[
+                    ["id", "status", "current_node", "error", "created_at"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("No runs yet.")
+        if trail:
+            frame = pd.DataFrame(trail)[
+                [
+                    "created_at",
+                    "node",
+                    "event",
+                    "actor",
+                    "model",
+                    "prompt_version",
+                    "tokens_in",
+                    "tokens_out",
+                    "duration_ms",
+                    "inputs_hash",
+                ]
+            ]
+            st.dataframe(frame, use_container_width=True, hide_index=True)
+
     render_statement_views(
         metrics,
         categorized_df,

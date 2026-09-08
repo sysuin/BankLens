@@ -52,14 +52,19 @@ USERS = [
 # income and some do not — the discrepancy cases for Phase 2.
 CUSTOMERS = {
     "meridian": [
-        ("M-1001", "Asha Verma", Decimal("95000"), "sample_1_high_saver.csv"),
-        ("M-1002", "Rohan Mehta", Decimal("70000"), "sample_2_active_spender.csv"),
+        # matches the statement (observed 200,000/month)
+        ("M-1001", "Asha Verma", Decimal("200000"), "sample_1_high_saver.csv"),
+        # matches (observed 95,000/month)
+        ("M-1002", "Rohan Mehta", Decimal("95000"), "sample_2_active_spender.csv"),
+        # over-declared: observed 50,000/month vs 120,000 declared -> review
         ("M-1003", "Priya Nair", Decimal("120000"), "sample_3_cashflow_stressed.csv"),
         ("M-1004", "Dev Kapoor", Decimal("55000"), None),
     ],
     "harbor": [
-        ("H-2001", "Lena Fischer", Decimal("4800"), "sample_statement.csv"),
-        ("H-2002", "Marco Ruiz", Decimal("9500"), "sample_3_cashflow_stressed.pdf"),
+        # matches (observed 100,250 for the single month)
+        ("H-2001", "Lena Fischer", Decimal("100000"), "sample_statement.csv"),
+        # under-declared: observed 50,000/month vs 40,000 declared -> review
+        ("H-2002", "Marco Ruiz", Decimal("40000"), "sample_3_cashflow_stressed.pdf"),
         ("H-2003", "Ines Duarte", Decimal("6200"), None),
     ],
 }

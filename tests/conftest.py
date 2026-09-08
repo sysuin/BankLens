@@ -53,7 +53,12 @@ def pg_cluster(tmp_path_factory):
 
     yield {"ids": ids, "pgdata": pgdata, "app_url": app_url, "admin_url": admin_url}
 
-    asyncio.run(db_session.dispose_engines())
+    # Engines created inside a TestClient loop cannot be disposed from a new
+    # loop; the app's lifespan already disposed them. Best effort only.
+    try:
+        asyncio.run(db_session.dispose_engines())
+    except RuntimeError:
+        pass
     server.cleanup()
 
 

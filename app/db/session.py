@@ -46,8 +46,11 @@ def _resolve_urls() -> tuple[str, str]:
     app_url, admin_url = settings.database_url, settings.database_admin_url
     if app_url and admin_url:
         return app_url, admin_url
-    from app.db.local import local_urls
+    from app.db.local import ensure_local_cluster, local_urls
 
+    # Falling back to the embedded cluster: make sure it is actually up.
+    # Idempotent, and it is what lets `make api` work on a fresh laptop.
+    ensure_local_cluster()
     local_app, local_admin = local_urls()
     return app_url or local_app, admin_url or local_admin
 

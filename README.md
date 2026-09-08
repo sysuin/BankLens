@@ -94,9 +94,36 @@ proof as tests.
 | `POST /statements/{id}/profile` | rm | retrieve + narrate, stored with model, prompt version and sources |
 | `POST /statements/{id}/chat` | any | tool-calling chat streamed as Server-Sent Events |
 | `GET /health` | — | database check, tenants on disk, version |
+| `POST /statements/{id}/run` | rm | run the **decision graph** (SSE): verify income → pause for review if needed → retrieve → narrate → guardrails → store |
+| `GET /statements/{id}/runs`, `GET /statements/{id}/audit` | any | runs and the append-only audit trail for a statement |
+| `GET /reviews`, `POST /reviews/{id}` | any / reviewer | the review queue; approve or reject resumes the checkpointed run (SSE) |
 
 Every log line carries a request id (echoed as `x-request-id`), the tenant
 and the user; set `LOG_FORMAT=json` for shippers.
+
+### The decision graph (Phase 2)
+
+Profiles are produced by a LangGraph state machine, checkpointed in Postgres
+after every node:
+
+```
+load_context → verify_income ─┬─ cleared ──────────────▶ retrieve → narrate → guardrails ─┬─ pass ──▶ finalize
+                              └─ review required ▶ [interrupt] ─ approved ─┘             └─ block ─▶ finalize_blocked
+                                                                └─ rejected ──▶ finalize_rejected
+```
+
+`verify_income` compares the income the customer declared at onboarding with
+the income observed in the statement. Above the review threshold (20 % by
+default) the run **pauses**: the decision lands in the reviewer's queue, the
+run is checkpointed, and the API can be stopped and restarted before a
+reviewer approves or rejects, at which point the graph resumes exactly where
+it stopped. `guardrails` refuses unsecured credit for customers in cash-flow
+deficit and flags recommendations that retrieval never surfaced.
+
+Every node writes an **audit row**: who acted, on which inputs (as a hash),
+with which model and prompt version, how many tokens, how long. The API role
+can insert and read the trail but never update or delete it.
+
 
 ---
 

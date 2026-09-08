@@ -193,6 +193,13 @@ class Settings(BaseSettings):
     # is what production runs until the platform is deployed.
     banklens_api_url: str = ""
 
+    # ── Decision graph (Phase 2) ──────────────────────────────────────────────
+    # Income verification: |observed - declared| / declared, in percent.
+    # Above the review threshold the graph pauses for a human; above the log
+    # threshold the comparison is written to the audit trail but not queued.
+    income_review_threshold_pct: float = 20.0
+    income_log_threshold_pct: float = 10.0
+
     # "text" for humans, "json" for log shippers. Either way every line
     # carries request_id, tenant and user when they are in scope.
     log_format: str = "text"

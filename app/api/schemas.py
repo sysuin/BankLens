@@ -108,6 +108,60 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=40)
 
 
+# ── Decision graph ───────────────────────────────────────────────────────────
+
+
+class RunOut(BaseModel):
+    id: uuid.UUID
+    statement_id: uuid.UUID
+    status: str
+    current_node: str | None = None
+    profile_id: uuid.UUID | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pending_decision_id: uuid.UUID | None = None
+
+
+class DecisionOut(BaseModel):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    statement_id: uuid.UUID
+    customer_ref: str
+    customer_name: str
+    kind: str
+    declared_monthly_income: float
+    observed_monthly_income: float
+    discrepancy_pct: float
+    threshold_pct: float
+    status: str
+    note: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime
+
+
+class ReviewRequest(BaseModel):
+    action: str = Field(pattern="^(approve|reject)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AuditEventOut(BaseModel):
+    id: int
+    run_id: uuid.UUID | None
+    statement_id: uuid.UUID | None
+    node: str
+    event: str
+    actor: str
+    inputs_hash: str | None
+    model: str | None
+    prompt_version: str | None
+    tokens_in: int | None
+    tokens_out: int | None
+    duration_ms: int | None
+    payload: dict
+    created_at: datetime
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 

@@ -18,11 +18,20 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.api import service
+from app.api import decisions, service
 from app.api.deps import Principal, current_user, require_role
-from app.api.schemas import ChatRequest, ProfileOut, StatementDetail, StatementSummary
+from app.api.schemas import (
+    AuditEventOut,
+    ChatRequest,
+    ProfileOut,
+    RunOut,
+    StatementDetail,
+    StatementSummary,
+)
+from app.api.sse import sse_response
 from app.core.context import tenant_scope
 from app.core.logger import get_logger
+from app.graph.builder import start_run
 
 router = APIRouter(prefix="/statements", tags=["statements"])
 logger = get_logger(__name__)
@@ -109,6 +118,58 @@ async def get_profile(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no profile generated yet")
     return ProfileOut(**row)
+
+
+# ── Decision graph ───────────────────────────────────────────────────────────
+
+
+@router.post("/{statement_id}/run")
+async def run_graph(
+    statement_id: uuid.UUID, principal: Principal = Depends(require_role("rm"))
+) -> StreamingResponse:
+    """
+    Run the decision graph for a statement, streaming node events as SSE.
+
+    Events: `run` (the run id), `node` (a node finished, with a small data
+    payload), `interrupt` (paused for a reviewer; the run is checkpointed),
+    `done`, `error`. A paused run is resumed from `POST /reviews/{id}`.
+    """
+    try:
+        await service.get_statement(principal.tenant_id, statement_id)
+    except service.NotFound:
+        raise _not_found()
+    events = start_run(
+        tenant=principal.tenant,
+        tenant_id=principal.tenant_id,
+        statement_id=statement_id,
+        actor_email=principal.email,
+        actor_id=principal.user_id,
+    )
+    return sse_response(events)
+
+
+@router.get("/{statement_id}/runs", response_model=list[RunOut])
+async def list_runs(
+    statement_id: uuid.UUID, principal: Principal = Depends(current_user)
+) -> list[RunOut]:
+    try:
+        rows = await decisions.list_runs(principal.tenant_id, statement_id)
+    except service.NotFound:
+        raise _not_found()
+    return [RunOut(**row) for row in rows]
+
+
+@router.get("/{statement_id}/audit", response_model=list[AuditEventOut])
+async def statement_audit(
+    statement_id: uuid.UUID, principal: Principal = Depends(current_user)
+) -> list[AuditEventOut]:
+    try:
+        rows = await decisions.list_audit(
+            principal.tenant_id, statement_id=statement_id
+        )
+    except service.NotFound:
+        raise _not_found()
+    return [AuditEventOut(**row) for row in rows]
 
 
 @router.post("/{statement_id}/chat")

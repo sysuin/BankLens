@@ -19,7 +19,7 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **309 passed** in 15 files, 24 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **320 passed** in 16 files, 25 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | | `wc -l` |
 | Tokens saved by cache | n/a (measured in Phase 4) | | |
 | Guardrail block rate | n/a (suite built in Phase 5) | | |
@@ -33,6 +33,13 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 - The API adds ~3 ms per read (`GET /statements` served in 3 ms from Postgres); upload of a 120-line CSV including parse, mask, categorise, compute and store ran in under 200 ms. The profile call is unchanged at ~16 s wall time, all of it the model.
 - **Harbor grounding gap.** The first real Harbor profile recommended *Term Deposit* and *High-Yield Savings Account* (both valid Harbor products, validated by the tenant-aware catalogue) while retrieval had surfaced `auto_loan.md`, `cashback_credit_card.md`, `everyday_chequing.md`. Meridian's golden set does not cover Harbor; `retrieval_supports_recommendation` would have flagged this. The retrieval query and the golden set need per-tenant variants (Phase 5/6 backlog).
 - The categorizer still needed no LLM call for any seeded statement.
+
+## Phase 2 findings (2026-09-08)
+
+- **Interrupt and resume survive a process restart.** Live run for Harbor customer H-2002: declared 40,000 vs observed 50,000 (25 %, above the 20 % threshold) paused the run; the API was killed and restarted; the reviewer approved; the graph resumed from `await_review` and finished. Same proof as `tests/test_graph.py::test_run_pauses_for_review_and_resumes_from_checkpoint`, which uses two separate app instances.
+- Audit trail for that run: 8 rows, actors `rm@harbor.example` → `reviewer@harbor.example` → `system`; narrate recorded `gpt-4o`, prompt `5e372eacf2da`, 5,269 in / 801 out tokens, 10.2 s. First retrieval for Harbor took 14.4 s because its Chroma index was built on first use.
+- The guardrail node's "not among retrieved sources" warning fired again on Harbor (secondary product). The Harbor grounding gap from Phase 1 is now visible in the audit trail, not only in a note.
+- LangGraph's checkpoint tables are not tenant-scoped (addressed by run id only). Known limitation, recorded in migration 0002.
 
 ## Caveats I say out loud
 

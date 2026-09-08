@@ -59,6 +59,21 @@ class StatementStatus(str, enum.Enum):
     profiled = "profiled"
 
 
+class RunStatus(str, enum.Enum):
+    running = "running"
+    awaiting_review = "awaiting_review"
+    completed = "completed"
+    failed = "failed"
+    rejected = "rejected"
+
+
+class DecisionStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    auto_cleared = "auto_cleared"
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -240,6 +255,131 @@ class Profile(TenantScoped, Base):
     statement: Mapped[Statement] = relationship(back_populates="profiles")
 
 
+class Run(TenantScoped, Base):
+    """One execution of the decision graph. `id` is the LangGraph thread id."""
+
+    __tablename__ = "runs"
+    __table_args__ = (Index("ix_runs_statement", "statement_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    statement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("statements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[RunStatus] = mapped_column(
+        Enum(RunStatus, name="run_status"), nullable=False, default=RunStatus.running
+    )
+    current_node: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("profiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Decision(TenantScoped, Base):
+    """
+    A decision with consequences: income verification.
+
+    Created by the graph's verify_income node. `pending` rows are the review
+    queue; a reviewer's approve/reject resumes the graph from its checkpoint.
+    """
+
+    __tablename__ = "decisions"
+    __table_args__ = (Index("ix_decisions_tenant_status", "tenant_id", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    statement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("statements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    declared_monthly_income: Mapped[float] = mapped_column(
+        Numeric(14, 2), nullable=False
+    )
+    observed_monthly_income: Mapped[float] = mapped_column(
+        Numeric(14, 2), nullable=False
+    )
+    discrepancy_pct: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    threshold_pct: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    status: Mapped[DecisionStatus] = mapped_column(
+        Enum(DecisionStatus, name="decision_status"), nullable=False
+    )
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AuditEvent(TenantScoped, Base):
+    """
+    Append-only trail: one row per graph node (and per human action).
+
+    Answers "who decided what, on which inputs, with which prompt and model".
+    Inputs are recorded as a hash so the trail never duplicates PII.
+    """
+
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_run", "run_id"),
+        Index("ix_audit_statement", "statement_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=True
+    )
+    statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("statements.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    node: Mapped[str] = mapped_column(String(64), nullable=False)
+    event: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(320), nullable=False)
+    inputs_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 # Tables whose rows are tenant-owned and therefore carry an RLS policy.
 TENANT_TABLES = (
     "users",
@@ -248,4 +388,7 @@ TENANT_TABLES = (
     "transactions",
     "statement_metrics",
     "profiles",
+    "runs",
+    "decisions",
+    "audit_events",
 )
