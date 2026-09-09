@@ -346,14 +346,12 @@ judged its own redaction markers.
 - **Synthetic data proves mechanism, not accuracy.** Two invented banks, seven
   invented customers. The claims are about reproducibility, isolation, audit
   and block rates, not about model accuracy on real customers.
-- **Harbor fails two grounding cases, on record.** Since Phase 8 the grounded
+- **The golden set is one set of statements for both banks.** The grounded
   layer runs against either catalogue with that bank's credit policy
-  (`make evals PROVIDER=openai TENANT=harbor`). Harbor passes the credit
-  guardrail and the catalogue check on every case, and fails
-  retrieval-supports-recommendation on two: its catalogue has no product
-  written for a deficit customer, so the model picks the everyday account
-  that retrieval never surfaced. The numbers card records it; the query was
-  not tuned to hide it.
+  (`make evals PROVIDER=openai TENANT=harbor`) and both pass every blocking
+  check, but the statements are the same three archetypes swept over savings
+  rates. Harbor's first run failed two cases and found two bugs; the numbers
+  card keeps the story.
 - **The local model is safe but imprecise.** It passes every blocking check
   and fails the advisory percentage check on every case, at four times the
   latency.
@@ -383,6 +381,7 @@ judged its own redaction markers.
 | Schema-enforced authority boundary | `app/pipeline/agent.py` | `ProfileNarrative` (model) vs `CustomerProfile` (code) |
 | PII masking before any model | `app/pipeline/sanitizer.py` | regex families; applied at ingest and on chat input |
 | Hybrid retrieval, RRF, multi-query, per-tenant index | `app/pipeline/rag.py` | `retrieve()`, `_rrf_merge_chunk_lists()`, `persist_dir_for()` |
+| Validator scoped to the retrieved shelf | `app/pipeline/agent.py` | `retrieved_shelf()`, `_validate_product_name()`: the retry hint names only retrieved products |
 | Reranker shipped off, by measurement | `app/core/config.py` | the comment on `rerank_backend` |
 | Tool-calling chat, hand-written loop | `app/pipeline/chat.py` | `run_chat_turn()`; a span per tool call |
 | Exact-key profile cache, shared and tenant-scoped | `app/pipeline/cache.py` | `cached_build_profile()`, Postgres backend |

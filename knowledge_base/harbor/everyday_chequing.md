@@ -20,3 +20,8 @@ Members whose income arrives regularly and who want a simple, fee-free primary a
 
 ## Cross-Sell Notes
 Position first for members with steady monthly credits and a healthy but unstructured savings pattern. Combine with the High-Yield Savings Account via the round-up feature.
+
+## Ideal Customer Profile
+- Any member, and especially those with a thin or negative savings rate (below 10%) who need a savings habit before a savings product: the round-up sweep builds a first buffer without a separate transfer
+- Members in cashflow deficit rebuilding after a consolidation loan
+- Members whose spending is dominated by rent, groceries and utilities and who want no monthly fee

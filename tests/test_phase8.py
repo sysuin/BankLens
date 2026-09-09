@@ -266,3 +266,39 @@ def test_pilot_report_reads_timestamps_and_labels_the_assumption(
 
     with pytest.raises(LookupError):
         run_db(pg_cluster["app_url"], lambda e: pilot_summary("nobody", e))
+
+
+# ── the validator hints only at what was retrieved ───────────────────────────
+
+
+def test_validator_names_only_the_retrieved_products():
+    from app.core.context import tenant_scope
+    from app.pipeline.agent import _validate_product_name, retrieved_shelf
+
+    with tenant_scope("harbor"):
+        # Whole catalogue: any real product passes, the hint lists the shelf.
+        assert _validate_product_name("Term Deposit") == "Term Deposit"
+        with pytest.raises(ValueError, match="knowledge base"):
+            _validate_product_name("Recurring Deposit")
+
+        with retrieved_shelf({"auto_loan.md", "high_yield_savings.md"}):
+            assert _validate_product_name("High-Yield Savings Account")
+            # Real, but never retrieved: rejected as a primary, and the hint
+            # does not name it or anything else outside the retrieved passages.
+            with pytest.raises(ValueError) as excinfo:
+                _validate_product_name("Term Deposit")
+            # As a secondary (a cross-sell) any catalogue product is fine,
+            # but an invention still gets the retrieved hint, not the shelf.
+            assert _validate_product_name("Term Deposit", strict=False)
+            with pytest.raises(ValueError, match="retrieved product context"):
+                _validate_product_name("Platinum Rewards Card", strict=False)
+            message = str(excinfo.value)
+            assert "retrieved product context" in message
+            assert "Harbor Auto Loan" in message
+            assert "High-Yield Savings" in message
+            assert "Term Deposit" not in message.split("Use a product from")[1]
+            assert "Everyday Chequing" not in message
+
+    # Outside build_profile the behaviour is unchanged.
+    with tenant_scope("harbor"):
+        assert _validate_product_name("Everyday Chequing Account")

@@ -269,4 +269,4 @@ class TestCorrectiveRetry:
 
         with pytest.raises(OutputParserException) as excinfo:
             self._run(monkeypatch, [self._response("Gold Loan")] * 2)
-        assert "not a product in the knowledge base" in str(excinfo.value)
+        assert "not a product in the retrieved product context" in str(excinfo.value)

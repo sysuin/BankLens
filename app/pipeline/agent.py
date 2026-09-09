@@ -14,9 +14,12 @@ deterministically in analyzer.py and passed in; this module only generates the
 narrative that explains them.
 """
 
+import contextvars
 import re
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterator
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
@@ -139,15 +142,59 @@ def resolve_product(name: str, tenant: str | None = None) -> str | None:
     return best_file if best_rank[0] >= _PRODUCT_MATCH_THRESHOLD else None
 
 
-def _validate_product_name(value: str) -> str:
-    """Field validator shared by primary_product and secondary_product."""
-    if resolve_product(value) is None:
-        known = sorted(get_product_catalogue())
-        raise ValueError(
-            f"'{value}' is not a product in the knowledge base. "
-            f"Use a product from: {known}"
-        )
-    return value
+# The product files retrieved for the profile being written, when known. Set
+# by build_profile() around the model call so the validator can insist on the
+# retrieved shelf rather than the whole catalogue.
+_retrieved_shelf: contextvars.ContextVar[frozenset[str] | None] = (
+    contextvars.ContextVar("banklens_retrieved_shelf", default=None)
+)
+
+
+@contextmanager
+def retrieved_shelf(sources) -> Iterator[None]:
+    """Scope the validator to these knowledge-base filenames."""
+    token = _retrieved_shelf.set(frozenset(sources))
+    try:
+        yield
+    finally:
+        _retrieved_shelf.reset(token)
+
+
+def product_title(filename: str, tenant: str | None = None) -> str:
+    """The H1 of a catalogue file, which is the name the model should use."""
+    path = kb_dir(tenant or current_tenant()) / filename
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return filename
+
+
+def _validate_product_name(value: str, *, strict: bool = True) -> str:
+    """
+    Field validator shared by primary_product and secondary_product.
+
+    A retry message that listed the whole catalogue taught the model the
+    shelf: it would name a real product that retrieval never surfaced, and
+    the grounding check would fail. Inside build_profile() the hint names
+    only the retrieved products. The primary recommendation must be one of
+    them (`strict`): the narrative is grounded in the passages, not the
+    shelf. The secondary may be any catalogue product, because the top
+    passages often cover one or two products and a cross-sell from the
+    same catalogue is not a hallucination.
+    """
+    shelf = _retrieved_shelf.get()
+    resolved = resolve_product(value)
+    if resolved is not None and (not strict or shelf is None or resolved in shelf):
+        return value
+    if shelf:
+        options = sorted(product_title(f) for f in shelf)
+        where = "the retrieved product context"
+    else:
+        options = sorted(get_product_catalogue())
+        where = "the knowledge base"
+    raise ValueError(
+        f"'{value}' is not a product in {where}. Use a product from: {options}"
+    )
 
 
 # ── Output Schema ─────────────────────────────────────────────────────────────
@@ -201,11 +248,15 @@ class ProfileNarrative(BaseModel):
         description="Exactly 3 structured bullet points for the RM call pitch: 1. Opening observation, 2. Value proposition, 3. Call-to-action.",
     )
 
-    @field_validator("primary_product", "secondary_product")
+    @field_validator("primary_product")
     @classmethod
-    def product_must_exist(cls, value: str) -> str:
-        """Reject product names that do not correspond to a knowledge base entry."""
-        return _validate_product_name(value)
+    def _primary_is_retrieved(cls, value: str) -> str:
+        return _validate_product_name(value, strict=True)
+
+    @field_validator("secondary_product")
+    @classmethod
+    def _secondary_is_in_catalogue(cls, value: str) -> str:
+        return _validate_product_name(value, strict=False)
 
 
 class CustomerProfile(ProfileNarrative):
@@ -262,7 +313,8 @@ def build_profile(
     defense, and RAG context, validated against the tenant's catalogue.
     """
     with tenant_scope(tenant or current_tenant()):
-        return _build_profile(metrics, retrieved_chunks)
+        with retrieved_shelf(chunk["source"] for chunk in retrieved_chunks):
+            return _build_profile(metrics, retrieved_chunks)
 
 
 def _build_profile(
