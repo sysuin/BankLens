@@ -14,7 +14,8 @@ Users per tenant (password for all: `banklens-demo`):
 
 Customers per tenant carry a declared monthly income, which Phase 2 compares
 with the income observed in their statements. Everything here is synthetic;
-no real person, account or institution is represented.
+no real person, account or institution is represented. Refuses to run when
+BANKLENS_ENV=production.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.db.models import Customer, Role, Tenant, User
 from app.db.session import admin_session, dispose_engines
@@ -130,8 +132,26 @@ async def _ensure_customer(
     return customer
 
 
+def assert_seed_is_safe_for(env: str) -> None:
+    """
+    Refuse to seed a production database.
+
+    The users this module creates share a password that is printed in the
+    README and pre-filled in the console. That is right for a laptop demo
+    and wrong anywhere real, so the seed follows the JWT-secret guard in
+    `app/api/security.py`: in production it refuses before touching the
+    database.
+    """
+    if env.strip().lower() == "production":
+        raise RuntimeError(
+            "BANKLENS_ENV=production: refusing to seed demo tenants and users "
+            "with the published demo password."
+        )
+
+
 async def seed(with_statements: bool = False) -> dict:
     """Create tenants, users and customers. Returns ids for callers (tests)."""
+    assert_seed_is_safe_for(settings.banklens_env)
     created: dict = {"tenants": {}, "users": {}, "customers": {}}
     async with admin_session() as session:
         for spec in TENANTS:

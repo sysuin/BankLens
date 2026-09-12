@@ -302,3 +302,21 @@ def test_validator_names_only_the_retrieved_products():
     # Outside build_profile the behaviour is unchanged.
     with tenant_scope("harbor"):
         assert _validate_product_name("Everyday Chequing Account")
+
+
+# ── the seed refuses production ──────────────────────────────────────────────
+
+
+def test_seed_refuses_to_run_in_production(monkeypatch):
+    import asyncio
+
+    from app.db.seed import assert_seed_is_safe_for, seed
+
+    with pytest.raises(RuntimeError, match="refusing to seed"):
+        assert_seed_is_safe_for("production")
+    assert_seed_is_safe_for("development") is None
+
+    # Through the entry point: refused before any database engine is built.
+    monkeypatch.setattr(settings, "banklens_env", "production")
+    with pytest.raises(RuntimeError, match="BANKLENS_ENV=production"):
+        asyncio.run(seed())
