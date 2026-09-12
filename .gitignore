@@ -4,6 +4,8 @@
 docs/*
 !docs/discovery.md
 !docs/numbers_card.md
+!docs/17_platform_from_scratch.md
+!docs/18_challenges_and_decisions.md
 !docs/governance/
 !docs/governance/*.md
 .claude/
