@@ -1,5 +1,7 @@
 # Environment variables, keys, and personal notes — never commit
 .env
+/Claude outputs/
+/GENAI_CONCEPTS_RAG_AGENTS_MCP_GUIDE.md
 *.pem
 docs/*
 !docs/discovery.md

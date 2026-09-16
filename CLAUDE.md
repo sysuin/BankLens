@@ -50,7 +50,7 @@ app/db/          models, session (RLS pinning), local (embedded Postgres), seed
 app/worker.py    bulk job worker (SKIP LOCKED, leases)
 app/main.py      Streamlit console (direct mode and API mode)
 evals/           golden set, run_evals, compare_providers, redteam/, bias_check, baseline/
-alembic/         migrations 0001–0007; every tenant table's RLS policy lives here
+alembic/         migrations 0001–0008; every tenant table's RLS policy lives here
 docs/            discovery, numbers_card, governance/ (tracked); the rest is a local library
 scripts/         prove_isolation, show_trace, load_test
 ```
@@ -84,11 +84,22 @@ Demo users: `rm@<tenant>.example`, `reviewer@<tenant>.example`, password
 
 - No PII in fixtures, logs, spans or audit payloads. Samples are synthetic.
 - No raw SQL from user input, ever. No new database role without a policy review.
+- The API process never connects as the owner role. Spans, budgets and
+  LangGraph checkpoints run as `banklens_app` with grants from migration 0008.
+  If a LangGraph upgrade adds checkpoint migrations, the API refuses to start:
+  add a revision that calls `PostgresSaver.setup()` like 0008 does.
+- A tenant slug reaches the filesystem only through
+  `app.pipeline.rag.validate_tenant_slug`.
 - No new dependency for something the standard library or an existing one does.
 - No "fix" that raises a threshold until the numbers pass. Record the miss
   in `docs/numbers_card.md` and fix the cause.
 - Do not edit `alembic/versions/*` after they have been applied; add a new
   revision.
+
+## Open work
+
+`TODO.md` at the repository root is the one list of what is still open.
+Update it in the same commit as the work that changes it.
 
 ## Commits
 
