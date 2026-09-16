@@ -24,15 +24,15 @@ import os
 import socket
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.context import tenant_scope
 from app.core.logger import get_logger
 from app.db.models import Job, JobStatus
-from app.db.session import admin_session, dispose_engines, tenant_session
+from app.db.session import dispose_engines, tenant_session, unscoped_app_session
 from app.platform import gateway
 from app.platform.tracing import (
     ATTR_STATEMENT_ID,
@@ -48,34 +48,25 @@ WORKER_NAME = f"{socket.gethostname()}:{os.getpid()}"
 
 
 async def claim_job() -> Job | None:
-    """Claim the oldest queued (or lease-expired) job, or None."""
-    lease = timedelta(seconds=settings.job_lease_seconds)
-    async with admin_session() as session:
-        row = (
+    """
+    Claim the oldest queued (or lease-expired) job, or None.
+
+    The claim is the one cross-bank step, so it goes through
+    `claim_next_job()` (migration 0009), a narrow SECURITY DEFINER function
+    that returns only the job's id and bank. Everything after that runs as
+    the ordinary role inside the job's own bank, where the policy applies.
+    """
+    async with unscoped_app_session() as session:
+        claimed = (
             await session.execute(
-                select(Job)
-                .where(
-                    (Job.status == JobStatus.queued)
-                    | (
-                        (Job.status == JobStatus.running)
-                        & (Job.leased_until < datetime.now(timezone.utc))
-                    )
-                )
-                .order_by(Job.created_at)
-                .with_for_update(skip_locked=True)
-                .limit(1)
+                text("SELECT job_id, job_tenant_id FROM claim_next_job(:w, :lease)"),
+                {"w": WORKER_NAME, "lease": settings.job_lease_seconds},
             )
-        ).scalar_one_or_none()
-        if row is None:
-            return None
-        row.status = JobStatus.running
-        row.attempts += 1
-        row.worker = WORKER_NAME
-        row.leased_until = datetime.now(timezone.utc) + lease
-        row.started_at = datetime.now(timezone.utc)
-        await session.flush()
-        job_id = row.id
-    async with admin_session() as session:
+        ).first()
+    if claimed is None:
+        return None
+    job_id, tenant_id = claimed
+    async with tenant_session(tenant_id) as session:
         return await session.get(Job, job_id)
 
 
@@ -151,7 +142,7 @@ async def process(job: Job) -> None:
 
     duration_ms = int((time.perf_counter() - started) * 1000)
     cost = await _cost_for(job.tenant_id, statement_id)
-    async with admin_session() as session:
+    async with tenant_session(job.tenant_id) as session:
         row = await session.get(Job, job.id)
         row.status = final
         row.error = error

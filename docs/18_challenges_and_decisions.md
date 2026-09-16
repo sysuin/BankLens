@@ -1,7 +1,7 @@
 # Challenges, decisions and the roads not taken
 
 **Tracked, ships.** Every real problem hit while building the platform
-(Phases 0 to 8, September 2026), what the symptom looked like, the approaches
+(Phases 0 to 8 and the hardening after them, September 2026), what the symptom looked like, the approaches
 that were on the table, which one was chosen and why. Written for someone new
 to the codebase: each entry stands alone. Numbers come from
 `docs/numbers_card.md`, where each has the command that produced it.
@@ -352,7 +352,7 @@ message listed the whole catalogue.
   the seed. The guard was added anyway: `app/db/seed.py` refuses to run when
   `BANKLENS_ENV=production`, matching the existing JWT-secret guard.
 - Three below-the-bar notes came with it. All three are now fixed; see H3
-  and H4.
+  and H4. The last owner-role user, the worker, is H5.
 
 ### H3. The API process connected as the database owner
 - **Symptom:** none visible. The review noticed that the API held the owner
@@ -379,8 +379,7 @@ message listed the whole catalogue.
 - **Proof:** `test_api_runs_pause_and_resume_without_the_owner_role` points
   the owner URL at a database that does not exist, then signs in, uploads,
   pauses a run, approves it and resumes it. Spans are still stored and the
-  budget is still read. The worker still uses the owner role to claim jobs
-  across tenants; it is a separate process and is next on the list.
+  budget is still read. The worker was fixed next; see H5.
 
 ### H4. Retention missed two stores, and tenant slugs were paths
 - **Spans and query-log rows survived a customer delete.** They carry
@@ -400,6 +399,69 @@ message listed the whole catalogue.
   (lowercase letters, digits, `_` and `-`, at most 64 characters) that every
   path, index and collection name goes through, and an MCP error that names
   the banks that exist so the calling agent can correct itself.
+
+### H5. The worker needed to see every bank's jobs
+- **Symptom:** after H3, the worker was the last process using the owner
+  role. It claimed the next job across all banks, then loaded and finished
+  it, all with rights to bypass every policy.
+- **Cause:** a queue is shared by design. Choosing the next job means looking
+  at every bank's rows, which row-level security exists to prevent.
+- **Options:** (1) one worker per bank, each pinned to its tenant; (2) loop
+  over banks, pinning each in turn; (3) a narrow `SECURITY DEFINER` function
+  that performs only the claim with the owner's rights.
+- **Chosen:** (3), migration 0009. `claim_next_job()` locks the oldest
+  claimable job with `SKIP LOCKED`, sets the lease, and returns only the job
+  id and tenant id. `EXECUTE` is revoked from everyone and granted to the API
+  role; the function has a fixed `search_path`, so nobody can shadow the
+  `jobs` table. Loading, processing and finishing happen in the job's own
+  tenant session.
+- **Why not (1) or (2):** (1) multiplies processes with every bank and wastes
+  capacity when one bank is idle; (2) makes one busy bank starve the others
+  or adds a fairness scheduler to build. A single audited function keeps the
+  queue global and the privilege tiny.
+- **Proof:** the worker test now runs with no owner URL at all, and a test
+  checks the function is `SECURITY DEFINER`, callable by the API role, not
+  callable by `PUBLIC`, and that the API role still sees no jobs unpinned.
+
+### H6. Deploying the API without spending money or handling secrets
+- **The situation:** production is one small EC2 host running the console.
+  The API needs Postgres, a signing secret and database passwords. The
+  project's rule is zero spend, and passwords should not be typed or pasted
+  by anyone, including a coding agent.
+- **Options for the database:** (1) managed RDS; (2) Postgres in a container
+  on the same host with a volume; (3) keep the embedded `pgserver` cluster in
+  the API container.
+- **Chosen:** (2). No new bill, the same Postgres version the tests use, and
+  data on a host volume that survives container restarts. (1) is right for a
+  real bank and costs money; (3) ties the data to one container's lifetime.
+- **Options for secrets:** (a) generate them locally and store them as
+  GitHub secrets; (b) generate them on the host at first deploy and keep them
+  there.
+- **Chosen:** (b). They never pass through GitHub, the image, a terminal or
+  this repository. The API container receives only the API and chat role
+  URLs; the owner password is used only by a one-off migration container. To
+  make that possible, the URL resolver now accepts an API-role URL with no
+  owner URL, and the owner engine refuses with a clear message when asked.
+- **The safety switch:** the job is off unless the repository variable
+  `DEPLOY_API` is `true`, and it refuses on a host with under 1.8 GB of RAM.
+  The console, the API and Postgres do not fit in 1 GB; a job that
+  out-of-memory-killed the live console would be worse than no API.
+- **A bug caught in review:** the first draft mounted the console's vector
+  index directory into the API container too. Chroma does not support two
+  processes writing one index, so the API now has its own directory.
+
+### H7. Measuring minutes saved without a stopwatch in the repo
+- **The situation:** "about twenty minutes per manual review" is an
+  assumption, and a pilot needs people.
+- **Chosen:** make the people part cheap. `docs/pilot_protocol.md` is a
+  half-day design (three RMs, six statements, crossed manual and assisted
+  modes). `make pilot` reads a stopwatch sheet and prints measured medians.
+- **The rule that matters:** the report prints a measured saving only when
+  both modes were timed. Manual timings alone replace the manual figure but
+  keep the saving labelled as partial, because subtracting machine time from
+  human time is not like for like.
+- **Privacy:** the real sheet names RMs by code only and is gitignored; the
+  example sheet is tracked.
 
 ---
 

@@ -63,7 +63,7 @@ What each step does:
   project folder? The project path contains a space, and Postgres refuses a
   socket directory with a space in it. That cost an hour; see the challenges
   document.)
-- **`make migrate`** runs Alembic migrations `0001` to `0008`. A migration is a
+- **`make migrate`** runs Alembic migrations `0001` to `0009`. A migration is a
   versioned script that changes the database schema. Ours also create the
   security policies, the roles and the views, so security is versioned with
   the schema.
@@ -274,6 +274,14 @@ taking the same job), holds a lease so a crashed worker's job is reclaimed,
 and records cost and duration per job from the spans. `make load` pushes 50
 statements through it.
 
+The worker does not know which bank's job is next, so claiming is the one
+step that looks across banks. It goes through a small database function,
+`claim_next_job()`, which runs with the owner's rights, returns only the
+job's id and bank, and is the only thing the worker's role may call. After
+the claim, the worker loads, runs and finishes the job inside that bank's
+session like any other request. Neither the API nor the worker ever connects
+as the database owner.
+
 ### 7.2 Rate limiting
 `app/platform/ratelimit.py`: a sliding window in memory for one process, or
 a per-user per-minute counter row in Postgres shared by every API replica.
@@ -378,9 +386,11 @@ changing the repository: the doctrines, the layout, how to add a template, a
 tenant, a node or a guardrail, and what not to do.
 
 Production today is one EC2 host running the Streamlit container in direct
-mode. `docker-compose.yml` runs the full platform locally (Postgres, API,
-console, Jaeger). `deploy/k8s` and `deploy/terraform` describe the same image
-as a real deployment and are validated, not deployed.
+mode. The pipeline can also deploy the API and its own Postgres on that host,
+behind a switch, once the host has enough memory; `docs/deploy_runbook.md`
+walks through it. `docker-compose.yml` runs the full platform locally
+(Postgres, API, console, Jaeger). `deploy/k8s` and `deploy/terraform` describe
+the same image as a larger deployment and are validated, not deployed.
 
 ---
 
@@ -403,3 +413,5 @@ as a real deployment and are validated, not deployed.
 | The golden set and the runner | `evals/dataset.py`, `evals/run_evals.py` |
 | Every number, with its command | `docs/numbers_card.md` |
 | What went wrong and how it was fixed | `docs/18_challenges_and_decisions.md` |
+| How production is deployed | `docs/deploy_runbook.md` |
+| How to measure minutes saved | `docs/pilot_protocol.md` |

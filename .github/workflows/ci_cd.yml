@@ -8,6 +8,9 @@
 #   2. test    — run pytest with coverage report
 #   3. build   — build Docker image and push to Amazon ECR
 #   4. deploy  — SSH into EC2 and pull + restart the container
+#   5. deploy-api — the platform API and its Postgres on the same host.
+#                  OFF unless the repository variable DEPLOY_API is "true",
+#                  and it refuses to run on a host with under 1.8 GB of RAM.
 #
 # Required GitHub Secrets (Settings → Secrets → Actions):
 #   OPENAI_API_KEY          — used in the test job to validate config loading
@@ -175,9 +178,164 @@ jobs:
               $ECR_REPOSITORY:latest
 
             echo "Deployment complete. App running at http://${{ secrets.EC2_HOST }}:8501"
+
+            # Capacity report: what the host could also run (see deploy-api).
+            echo "host capacity: $(nproc) vCPU, $(free -m | awk '/Mem:/{print $2}') MB RAM, $(free -m | awk '/Swap:/{print $2}') MB swap"
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  # ── Job 5: Deploy the platform API (opt-in) ─────────────────────────────────
+  #
+  # Runs the FastAPI service and a Postgres container next to the console.
+  # Switched on by the repository variable DEPLOY_API=true (Settings →
+  # Secrets and variables → Actions → Variables). No new GitHub secret is
+  # needed: the database passwords and the JWT secret are generated ON THE
+  # HOST the first time, kept in a root-readable-only file there, and never
+  # pass through GitHub or the build. The API container gets only the API
+  # and chat role URLs; the owner URL goes only to the one-off migration
+  # container. The API keeps its own vector index directory: Chroma does not
+  # support two processes writing one. nginx, if present, gets a /api/
+  # location; if its config test fails the snippet is removed and the console
+  # keeps serving.
+  deploy-api:
+    name: Deploy platform API
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: vars.DEPLOY_API == 'true'
+
+    steps:
+      - name: Deploy API and Postgres via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION,ECR_REPOSITORY,OPENAI_API_KEY
+          script: |
+            set -e
+
+            MEM=$(free -m | awk '/Mem:/{print $2}')
+            if [ "$MEM" -lt 1800 ]; then
+              echo "Refusing: the API and Postgres need at least 2 GB of RAM next to the console; this host has ${MEM} MB."
+              echo "Resize the instance (for example t3.small) and re-run this job. The console was deployed and is untouched."
+              exit 1
+            fi
+
+            DIR=/home/ec2-user/banklens-platform
+            mkdir -p "$DIR/pginit" "$DIR/pgdata" "$DIR/chroma_db"
+            umask 077
+
+            rand() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+            if [ ! -f "$DIR/secrets.env" ]; then
+              {
+                echo "POSTGRES_PASSWORD=$(rand)"
+                echo "APP_DB_PASSWORD=$(rand)"
+                echo "CHAT_DB_PASSWORD=$(rand)"
+                echo "JWT_SECRET=$(rand)"
+              } > "$DIR/secrets.env"
+              echo "Generated platform secrets on the host (first deploy)."
+            fi
+            set -a; . "$DIR/secrets.env"; set +a
+
+            aws ecr get-login-password --region $AWS_REGION \
+              | docker login --username AWS --password-stdin $ECR_REPOSITORY
+            docker pull $ECR_REPOSITORY:latest
+            docker network create banklens >/dev/null 2>&1 || true
+
+            if ! docker ps -a --format '{{.Names}}' | grep -qx banklens_pg; then
+              cat > "$DIR/pginit/10-roles.sh" <<'INIT'
+            #!/bin/sh
+            set -e
+            psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+              -c "CREATE ROLE banklens_app LOGIN PASSWORD '$APP_DB_PASSWORD'" \
+              -c "GRANT CONNECT ON DATABASE banklens TO banklens_app" \
+              -c "CREATE ROLE banklens_chat LOGIN NOINHERIT PASSWORD '$CHAT_DB_PASSWORD'" \
+              -c "GRANT CONNECT ON DATABASE banklens TO banklens_chat"
+            INIT
+              chmod 755 "$DIR/pginit/10-roles.sh"
+              {
+                echo "POSTGRES_USER=banklens_owner"
+                echo "POSTGRES_DB=banklens"
+                echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
+                echo "APP_DB_PASSWORD=$APP_DB_PASSWORD"
+                echo "CHAT_DB_PASSWORD=$CHAT_DB_PASSWORD"
+              } > "$DIR/pg.env"
+              docker run -d --name banklens_pg --restart unless-stopped \
+                --network banklens --memory 384m \
+                --env-file "$DIR/pg.env" \
+                -v "$DIR/pgdata:/var/lib/postgresql/data" \
+                -v "$DIR/pginit:/docker-entrypoint-initdb.d:ro" \
+                postgres:16-alpine
+            fi
+            for i in $(seq 1 30); do
+              docker exec banklens_pg pg_isready -U banklens_owner -d banklens >/dev/null 2>&1 && break
+              sleep 2
+            done
+            docker exec banklens_pg pg_isready -U banklens_owner -d banklens
+
+            PG=banklens_pg:5432/banklens
+            {
+              echo "DATABASE_URL=postgresql+asyncpg://banklens_app:$APP_DB_PASSWORD@$PG"
+              echo "DATABASE_CHAT_URL=postgresql+asyncpg://banklens_chat:$CHAT_DB_PASSWORD@$PG"
+            } > "$DIR/api.env"
+            {
+              cat "$DIR/api.env"
+              echo "DATABASE_ADMIN_URL=postgresql+asyncpg://banklens_owner:$POSTGRES_PASSWORD@$PG"
+            } > "$DIR/migrate.env"
+            {
+              echo "JWT_SECRET=$JWT_SECRET"
+              echo "BANKLENS_ENV=production"
+              echo "RATE_LIMIT_BACKEND=postgres"
+              echo "LOG_FORMAT=json"
+            } >> "$DIR/api.env"
+
+            # Migrations run as the owner in a one-off container, then exit.
+            docker run --rm --network banklens --env-file "$DIR/migrate.env" \
+              $ECR_REPOSITORY:latest python -m alembic upgrade head
+
+            docker stop banklens_api >/dev/null 2>&1 || true
+            docker rm banklens_api >/dev/null 2>&1 || true
+            docker run -d --name banklens_api --restart unless-stopped \
+              --network banklens -p 127.0.0.1:8000:8000 \
+              --env-file "$DIR/api.env" -e OPENAI_API_KEY \
+              -v "$DIR/chroma_db:/app/chroma_db" \
+              $ECR_REPOSITORY:latest \
+              uvicorn app.api.app:app --host 0.0.0.0 --port 8000 --root-path /api
+
+            for i in $(seq 1 45); do
+              curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 && break
+              sleep 2
+            done
+            curl -fsS http://127.0.0.1:8000/health; echo
+
+            CONF=/etc/nginx/default.d/banklens-api.conf
+            if [ -d /etc/nginx/default.d ]; then
+              sudo tee "$CONF" >/dev/null <<'NGINX'
+            location /api/ {
+                proxy_pass http://127.0.0.1:8000/;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_buffering off;
+                proxy_read_timeout 300s;
+            }
+            NGINX
+              if sudo nginx -t; then
+                sudo systemctl reload nginx
+                echo "nginx: /api/ routed to the platform API"
+              else
+                sudo rm -f "$CONF"
+                echo "nginx rejected the /api/ snippet; removed it. The API is on 127.0.0.1:8000 only."
+              fi
+            else
+              echo "No /etc/nginx/default.d on this host; the API is on 127.0.0.1:8000 only."
+            fi
+        env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

@@ -56,4 +56,16 @@ copies of the samples.
 
 API keys and database URLs come from the environment (`.env`, never
 committed). The JWT signing secret has a development default that the API
-refuses to start with when `BANKLENS_ENV=production`.
+refuses to start with when `BANKLENS_ENV=production`, and the seed refuses
+to create demo users there.
+
+When the API is deployed (`docs/deploy_runbook.md`), its database passwords
+and JWT secret are generated on the host at first deploy and kept in a file
+readable only by its owner. They never pass through GitHub or the image. The
+API and the worker receive only the API and chat role URLs; the owner
+password is used only by the one-off migration container.
+
+## Pilot timings
+
+Stopwatch timings from a pilot (`docs/pilot_protocol.md`) name RMs by code,
+never by name, and stay in `data/pilot/timings.csv`, which is gitignored.

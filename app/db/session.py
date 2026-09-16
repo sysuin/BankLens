@@ -43,9 +43,16 @@ _chat_engine: AsyncEngine | None = None
 
 
 def _resolve_urls() -> tuple[str, str]:
-    """(app_url, admin_url), falling back to the embedded local cluster."""
+    """
+    (app_url, admin_url), falling back to the embedded local cluster.
+
+    A deployed API or worker sets only DATABASE_URL: it never needs the owner
+    role, so it never receives the owner password, and admin_url comes back
+    empty. Only when neither is set (a laptop) does the embedded cluster
+    supply both.
+    """
     app_url, admin_url = settings.database_url, settings.database_admin_url
-    if app_url and admin_url:
+    if app_url:
         return app_url, admin_url
     from app.db.local import ensure_local_cluster, local_urls
 
@@ -82,6 +89,11 @@ def admin_engine() -> AsyncEngine:
     global _admin_engine
     if _admin_engine is None:
         _, url = _resolve_urls()
+        if not url:
+            raise RuntimeError(
+                "DATABASE_ADMIN_URL is not set. The owner role is only for "
+                "migrations and seeding; the API and the worker do not use it."
+            )
         _admin_engine = create_async_engine(url, pool_pre_ping=True, pool_size=2)
     return _admin_engine
 

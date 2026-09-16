@@ -13,7 +13,10 @@ one bank's, by policy rather than by filter.
 
 from __future__ import annotations
 
+import csv
+import statistics
 import uuid
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
@@ -22,6 +25,43 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.db.session import tenant_session, unscoped_app_session
 
 MANUAL_MINUTES_ASSUMED = 20.0  # docs/discovery.md, "Assumption"
+
+# Stopwatch timings from the pilot sessions (docs/pilot_protocol.md). One row
+# per statement: mode "manual" is the RM working from the ledger, "assisted"
+# is the RM working from the BankLens profile. Real sessions go in
+# data/pilot/timings.csv; data/pilot/timings.example.csv shows the columns.
+TIMINGS_COLUMNS = (
+    "session_date",
+    "rm_id",
+    "tenant",
+    "statement_ref",
+    "statement_lines",
+    "mode",
+    "minutes",
+    "notes",
+)
+
+
+def load_timings(path: Path, tenant: str) -> dict[str, list[float]]:
+    """{"manual": [...], "assisted": [...]} for one tenant, validated."""
+    out: dict[str, list[float]] = {"manual": [], "assisted": []}
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        missing = [c for c in TIMINGS_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"{path}: missing columns {missing}")
+        for line, row in enumerate(reader, start=2):
+            if row["tenant"].strip() != tenant:
+                continue
+            mode = row["mode"].strip().lower()
+            if mode not in out:
+                raise ValueError(f"{path}:{line}: mode must be manual or assisted")
+            minutes = float(row["minutes"])
+            if not 0 < minutes < 480:
+                raise ValueError(f"{path}:{line}: minutes {minutes} is not plausible")
+            out[mode].append(minutes)
+    return out
+
 
 _SQL = {
     "statements": "SELECT count(*) FROM statements",
@@ -77,8 +117,34 @@ async def _tenant_id(slug: str, engine: AsyncEngine | None) -> uuid.UUID:
     return row[0]
 
 
+def apply_timings(
+    out: dict[str, Any], timings: dict[str, list[float]] | None
+) -> dict[str, Any]:
+    """Add stopwatch medians and, only when both modes were timed, minutes saved."""
+    timings = timings or {"manual": [], "assisted": []}
+    manual, assisted = timings.get("manual", []), timings.get("assisted", [])
+    out["manual_sessions"] = len(manual)
+    out["assisted_sessions"] = len(assisted)
+    out["manual_minutes_measured"] = (
+        round(statistics.median(manual), 2) if manual else None
+    )
+    out["assisted_minutes_measured"] = (
+        round(statistics.median(assisted), 2) if assisted else None
+    )
+    # Only a like-for-like comparison counts as measured savings: both modes
+    # timed by stopwatch. Anything less is reported, and labelled, as partial.
+    out["minutes_saved_measured"] = (
+        round(out["manual_minutes_measured"] - out["assisted_minutes_measured"], 2)
+        if manual and assisted
+        else None
+    )
+    return out
+
+
 async def pilot_summary(
-    tenant_slug: str, engine: AsyncEngine | None = None
+    tenant_slug: str,
+    engine: AsyncEngine | None = None,
+    timings: dict[str, list[float]] | None = None,
 ) -> dict[str, Any]:
     """Every number a pilot report needs, for one bank."""
     tenant_id = await _tenant_id(tenant_slug, engine)
@@ -100,7 +166,8 @@ async def pilot_summary(
     out["minutes_saved_if_assumption_holds"] = (
         round(MANUAL_MINUTES_ASSUMED - p50 / 60.0, 2) if p50 is not None else None
     )
-    return out
+
+    return apply_timings(out, timings)
 
 
 def render(summary: dict[str, Any]) -> str:
@@ -130,25 +197,58 @@ def render(summary: dict[str, Any]) -> str:
         ),
         ("profile cache hits", f"{summary['cache_hits']:.0f}"),
         ("model spend, all time", f"${summary['model_cost_usd']:.4f}"),
-        (
-            "manual minutes per statement",
-            f"{summary['manual_minutes_assumed']:.0f} (ASSUMPTION, docs/discovery.md)",
-        ),
-        (
-            "minutes saved per statement",
-            (
-                "n/a (no completed runs)"
-                if summary["minutes_saved_if_assumption_holds"] is None
-                else f"{summary['minutes_saved_if_assumption_holds']:.1f} if the assumption holds"
-            ),
-        ),
     ]
+    measured_manual = summary.get("manual_minutes_measured")
+    measured_assisted = summary.get("assisted_minutes_measured")
+    saved = summary.get("minutes_saved_measured")
+    if measured_manual is not None:
+        rows.append(
+            (
+                "manual minutes per statement",
+                f"{measured_manual:.1f} (MEASURED, median of "
+                f"{summary['manual_sessions']} timed statements)",
+            )
+        )
+    else:
+        rows.append(
+            (
+                "manual minutes per statement",
+                f"{summary['manual_minutes_assumed']:.0f} (ASSUMPTION, docs/discovery.md)",
+            )
+        )
+    if measured_assisted is not None:
+        rows.append(
+            (
+                "assisted minutes per statement",
+                f"{measured_assisted:.1f} (MEASURED, median of "
+                f"{summary['assisted_sessions']} timed statements)",
+            )
+        )
+    if saved is not None:
+        rows.append(("minutes saved per statement", f"{saved:.1f} (MEASURED)"))
+    elif summary["minutes_saved_if_assumption_holds"] is None:
+        rows.append(("minutes saved per statement", "n/a (no completed runs)"))
+    else:
+        rows.append(
+            (
+                "minutes saved per statement",
+                f"{summary['minutes_saved_if_assumption_holds']:.1f} if the assumption holds",
+            )
+        )
     width = max(len(k) for k, _ in rows) + 2
     lines = [f"Pilot report — tenant '{summary['tenant']}'", "-" * (width + 40)]
     lines += [f"{k:<{width}}{v}" for k, v in rows]
     lines.append("-" * (width + 40))
-    lines.append(
-        "Measured rows come from runs, decisions, profile_cache and spans. "
-        "The manual figure is not measured; a pilot replaces it with a stopwatch."
-    )
+    if saved is not None:
+        lines.append(
+            "Measured rows come from runs, decisions, profile_cache and spans; "
+            "manual and assisted minutes come from stopwatch sessions "
+            "(docs/pilot_protocol.md)."
+        )
+    else:
+        lines.append(
+            "Measured rows come from runs, decisions, profile_cache and spans. "
+            "Minutes saved needs both manual and assisted stopwatch timings; "
+            "see docs/pilot_protocol.md."
+        )
     return "\n".join(lines)

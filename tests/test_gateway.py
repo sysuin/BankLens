@@ -165,7 +165,16 @@ def _run(coro):
         builder.reset_checkpointer()
 
 
-def test_jobs_are_queued_processed_and_costed(pg_cluster, client, meridian_rm):
+def test_jobs_are_queued_processed_and_costed(
+    pg_cluster, client, meridian_rm, monkeypatch
+):
+    # The worker must not need the owner role: remove the owner URL, as in
+    # production, before the worker runs.
+    monkeypatch.setattr(
+        settings,
+        "database_admin_url",
+        "",
+    )
     customer_id = _customer_by_ref(client, meridian_rm, "M-1001")
     with (ROOT / "data" / "sample_1_high_saver.csv").open("rb") as fh:
         created = client.post(

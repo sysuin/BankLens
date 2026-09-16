@@ -7,40 +7,37 @@ drop off after a few weeks; the full history is in git and in
 
 Last updated: 2026-09-16.
 
-## Waiting on a decision
+## In progress
 
-- [ ] **Merge the branch chain and push to `main`.** Every commit from
-  `phase-0-baseline` to `phase-8-backlog` is unpushed. A push to
-  `main` deploys production, so this waits for an explicit go-ahead.
-  Pre-push checklist:
+- [ ] **Merge the branch chain and push to `main`.** Approved 2026-09-16.
+  Going through a pull request so CI tests everything before the deploy job
+  runs. Pre-push checklist:
   - [x] Direct mode (what production runs) touches no database: verified on
-    2026-09-16 with no database configured and a fresh home directory. No
-    Postgres process started, a full profile in 16 s.
-  - [ ] The Linux image builds with the new dependencies (`pgserver`,
-    `langgraph-checkpoint-postgres`, `fastapi`). Not verifiable here because
-    Docker is not installed; the CI `build` job runs before `deploy`, so a
-    failed build cannot reach the host.
+    2026-09-16 with no database configured and a fresh home directory.
+  - [ ] The Linux image builds with the new dependencies. Not verifiable
+    locally (no Docker); the CI `build` job runs before `deploy`.
   - [ ] Expect the first deploy to rebuild the vector index once: indexes now
     live under `chroma_db/<tenant>/<provider>/`.
-- [ ] **Deploy the API, not just the console.** Production runs only the
-  Streamlit direct mode. Needs: a real Postgres (RDS or a container with a
-  volume and backups), a `t3.small` host, `JWT_SECRET`,
-  `BANKLENS_ENV=production` and the three database URLs as secrets, nginx
-  routing `/api` to port 8000, and a deploy step that runs `alembic upgrade
-  head` before starting the API. The seed already refuses production.
 
-## Open work
+## Waiting on someone else
 
-- [ ] **Worker claims jobs as the owner role.** The API process no longer
-  uses the owner connection anywhere; `app/worker.py` still does, to claim
-  jobs across banks. Options: a narrow `SECURITY DEFINER` claim function
-  owned by the owner and callable by `banklens_app`, or claim per tenant.
-- [ ] **Validate a real pilot.** Three RM shadowing sessions with a stopwatch,
-  to replace the twenty-minute manual assumption that `make pilot` prints.
-  Cannot be done from the repository.
+- [ ] **Switch on the platform API in production.** The opt-in `deploy-api`
+  job is built (`docs/deploy_runbook.md`): Postgres in a container on the
+  host, secrets generated on the host, no owner URL in the API, nginx route
+  with rollback. It needs a host with at least 2 GB of RAM, which means
+  resizing the instance, a cost decision for the AWS account owner. Then
+  `gh variable set DEPLOY_API --body true` and re-run the pipeline. First
+  production users need creating by hand; the seed refuses production.
+- [ ] **Run the pilot.** Protocol and tooling are ready
+  (`docs/pilot_protocol.md`, `make pilot` reads `data/pilot/timings.csv`).
+  What remains is three RMs, six statements and a stopwatch.
 
 ## Done recently
 
+- 2026-09-16: worker claims jobs through `claim_next_job()` (migration 0009);
+  neither the API nor the worker uses the owner role, and deployed processes
+  get no owner URL; opt-in API deploy job and runbook; pilot protocol, timing
+  sheet and measured figures in `make pilot`.
 - 2026-09-16: API process runs without the owner role (migration 0008);
   customer deletion removes spans and query-log rows; tenant slugs validated
   before any path; MCP names the available tenants; local-only files ignored.

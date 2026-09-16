@@ -364,12 +364,14 @@ judged its own redaction markers.
   and the retention delete purges them by run. The API reads and writes them
   as its ordinary role, never the owner, but row-level security still does
   not apply to those tables.
-- **The worker still claims jobs as the database owner.** The API process no
-  longer uses the owner role anywhere; the bulk worker does, to claim jobs
-  across banks, and then processes each job inside that bank's session.
+- **Production runs the console only.** The platform API and its database
+  deploy through an opt-in job that needs a host with at least 2 GB of RAM;
+  the current host is smaller. `docs/deploy_runbook.md` has the switch.
 - **Minutes saved is still an assumption.** `make pilot` prints what the
   database can prove (seconds to a profile, reviewer wait, throughput) next to
-  the twenty-minute assumption, labelled as one.
+  the twenty-minute assumption, labelled as one. `docs/pilot_protocol.md` is
+  the half-day stopwatch study that replaces it; the report switches to
+  measured figures once both modes are timed.
 - **Vision OCR sends page images out before masking.** Off by default.
 - **Kubernetes and Terraform are stubs.** Production is one EC2 host; the
   manifests describe the same image as three deployments and are validated,
@@ -404,7 +406,7 @@ judged its own redaction markers.
 | OpenTelemetry spans with tokens and cost | `app/platform/tracing.py`, `app/platform/pricing.py` | `span()`, `set_llm_usage()`, Postgres exporter |
 | Model gateway: providers, retries, breaker, fallback, budget | `app/platform/gateway.py` | `choose()`, `chat_model()`, `GatewayCallback` |
 | Zero-key demo (Ollama) | `app/platform/gateway.py`, `Makefile` | `LLM_PROVIDER=auto`; `make evals PROVIDER=ollama` |
-| Job queue and worker | `app/worker.py`, `app/api/routes/jobs.py` | `SKIP LOCKED`, leases, cost per job from spans |
+| Job queue and worker | `app/worker.py`, `app/api/routes/jobs.py`, `alembic/versions/0009_worker_claim.py` | `claim_next_job()`: the one cross-bank step, `SKIP LOCKED`, leases, cost per job from spans |
 | Injection, scope gate, SQL allow-list, output scan | `app/platform/guardrails.py` | `scan_statement()`, `scope_gate()`, `guard_sql()` |
 | Red-team suite in CI | `evals/redteam/` | 80 cases, block rate and false-positive rate |
 | Semantic layer and vetted SQL templates | `app/warehouse/semantic_layer.yaml`, `app/warehouse/semantic.py` | validated at import |

@@ -348,7 +348,7 @@ def test_seed_refuses_to_run_in_production(monkeypatch):
 
 def test_api_runs_pause_and_resume_without_the_owner_role(pg_cluster, monkeypatch):
     """
-    Point the owner URL at a database that does not exist, then do everything
+    Remove the owner URL entirely, as in production, then do everything
     the API does: sign in, upload, run the graph to its pause, decide, resume.
     Spans must still be stored and the budget still read. If any request path
     reached for the owner connection, this would fail.
@@ -367,7 +367,7 @@ def test_api_runs_pause_and_resume_without_the_owner_role(pg_cluster, monkeypatc
     monkeypatch.setattr(
         settings,
         "database_admin_url",
-        "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/no_such_db",
+        "",
     )
     db_session.reset_engines()
     builder.reset_checkpointer()
@@ -427,3 +427,95 @@ def test_mcp_names_the_available_tenants():
         _resolve_tenant("nosuchbank")
     with pytest.raises(ValueError, match="invalid tenant"):
         _resolve_tenant("../meridian")
+
+
+def test_claim_function_is_the_only_cross_bank_door(pg_cluster):
+    """The API role can run the claim function but cannot read jobs unpinned."""
+
+    async def go(engine):
+        async with engine.connect() as conn:
+            unpinned = (
+                await conn.execute(text("SELECT count(*) FROM jobs"))
+            ).scalar_one()
+            privileges = (
+                await conn.execute(
+                    text(
+                        "SELECT has_function_privilege(current_user, "
+                        "'claim_next_job(text, integer)', 'EXECUTE'), "
+                        "has_function_privilege('public', "
+                        "'claim_next_job(text, integer)', 'EXECUTE'), "
+                        "(SELECT prosecdef FROM pg_proc WHERE proname = 'claim_next_job')"
+                    )
+                )
+            ).first()
+        return unpinned, tuple(privileges)
+
+    unpinned, (app_can, public_can, definer) = run_db(pg_cluster["app_url"], go)
+    assert unpinned == 0
+    assert app_can is True and public_can is False and definer is True
+
+
+def test_owner_engine_refuses_without_an_owner_url(monkeypatch):
+    from app.db import session as db_session
+
+    monkeypatch.setattr(settings, "database_url", "postgresql+asyncpg://a@b/c")
+    monkeypatch.setattr(settings, "database_admin_url", "")
+    db_session.reset_engines()
+    try:
+        with pytest.raises(RuntimeError, match="only for migrations and seeding"):
+            db_session.admin_engine()
+    finally:
+        monkeypatch.undo()
+        db_session.reset_engines()
+
+
+def test_pilot_timings_replace_the_assumption_only_when_both_modes_are_timed(
+    tmp_path,
+):
+    from app.warehouse.pilot import load_timings, render
+
+    base = {
+        "tenant": "meridian",
+        "statements": 3.0,
+        "statements_per_day": 3.0,
+        "runs_completed": 3.0,
+        "runs_failed": 0.0,
+        "seconds_to_profile_p50": 6.0,
+        "seconds_to_profile_p95": 9.0,
+        "reviews_decided": 1.0,
+        "reviews_pending": 0.0,
+        "reviewer_wait_seconds_p50": 60.0,
+        "reviewer_wait_seconds_p95": 60.0,
+        "cache_hits": 0.0,
+        "model_cost_usd": 0.01,
+        "manual_minutes_assumed": 20.0,
+        "minutes_saved_if_assumption_holds": 19.9,
+    }
+    sheet = tmp_path / "timings.csv"
+    sheet.write_text(
+        (ROOT / "data" / "pilot" / "timings.example.csv").read_text()
+        + "2026-10-01,rm-b,meridian,S-003,140,manual,18.5,\n"
+        + "2026-10-01,rm-b,harbor,H-001,90,manual,12.0,other bank\n"
+    )
+    timings = load_timings(sheet, "meridian")
+    assert timings == {"manual": [21.5, 18.5], "assisted": [4.0]}
+
+    from app.warehouse import pilot
+
+    def summary_with(t):
+        return pilot.apply_timings(dict(base), t)
+
+    full = render(summary_with(timings))
+    assert "20.0 (MEASURED, median of 2 timed statements)" in full
+    assert "16.0 (MEASURED)" in full and "ASSUMPTION" not in full
+
+    manual_only = render(summary_with({"manual": [21.5], "assisted": []}))
+    assert "21.5 (MEASURED" in manual_only
+    assert "if the assumption holds" in manual_only
+
+    bad = tmp_path / "bad.csv"
+    bad.write_text(
+        ",".join(pilot.TIMINGS_COLUMNS) + "\n2026-10-01,a,meridian,S,1,guess,5,\n"
+    )
+    with pytest.raises(ValueError, match="manual or assisted"):
+        load_timings(bad, "meridian")

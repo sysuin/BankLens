@@ -58,6 +58,8 @@ endif
 
 # What a pilot would measure: seconds to a profile, reviewer wait, throughput,
 # from the run and decision timestamps already in the database.
+# Stopwatch timings from pilot sessions go in data/pilot/timings.csv
+# (columns in data/pilot/timings.example.csv; protocol in docs/pilot_protocol.md).
 pilot:
 	$(PY) -m scripts.pilot_report --tenant $(TENANT)
 

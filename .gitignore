@@ -2,12 +2,16 @@
 .env
 /Claude outputs/
 /GENAI_CONCEPTS_RAG_AGENTS_MCP_GUIDE.md
+# Real pilot timings name RMs; keep them local (the example sheet is tracked)
+/data/pilot/timings.csv
 *.pem
 docs/*
 !docs/discovery.md
 !docs/numbers_card.md
 !docs/17_platform_from_scratch.md
 !docs/18_challenges_and_decisions.md
+!docs/deploy_runbook.md
+!docs/pilot_protocol.md
 !docs/governance/
 !docs/governance/*.md
 .claude/

@@ -1,0 +1,3 @@
+session_date,rm_id,tenant,statement_ref,statement_lines,mode,minutes,notes
+2026-10-01,rm-a,meridian,S-001,128,manual,21.5,read ledger end to end; product chosen from memory
+2026-10-01,rm-a,meridian,S-002,114,assisted,4.0,read profile; checked two ledger lines
