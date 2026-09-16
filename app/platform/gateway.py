@@ -189,20 +189,21 @@ def enable_budgets(enabled: bool = True) -> None:
 
 
 def _tenant_row(tenant_slug: str) -> tuple[uuid.UUID, float] | None:
-    """(tenant id, daily budget) for a slug, via the owner connection."""
+    """(tenant id, daily budget) for a slug, via the API role with the tenant pinned."""
     import psycopg
 
     from app.db.session import _resolve_urls
 
-    _, admin_url = _resolve_urls()
-    conninfo = admin_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    with psycopg.connect(conninfo, autocommit=True) as conn:
+    app_url, _ = _resolve_urls()
+    conninfo = app_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    with psycopg.connect(conninfo) as conn:
         row = conn.execute(
             "SELECT id, daily_budget_usd FROM tenants WHERE slug = %s", (tenant_slug,)
         ).fetchone()
         if row is None:
             return None
         tenant_id, limit = row
+        conn.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
         spent = conn.execute(
             "SELECT COALESCE(SUM(cost_usd), 0) FROM spans "
             "WHERE tenant_id = %s AND start_time >= date_trunc('day', now())",

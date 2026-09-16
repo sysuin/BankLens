@@ -63,7 +63,7 @@ What each step does:
   project folder? The project path contains a space, and Postgres refuses a
   socket directory with a space in it. That cost an hour; see the challenges
   document.)
-- **`make migrate`** runs Alembic migrations `0001` to `0007`. A migration is a
+- **`make migrate`** runs Alembic migrations `0001` to `0008`. A migration is a
   versioned script that changes the database schema. Ours also create the
   security policies, the roles and the views, so security is versioned with
   the schema.
@@ -216,6 +216,9 @@ with two separate app instances.
 
 Checkpoint rows have no tenant column, so their thread id is
 `<tenant_id>:<run_id>`: a run can only be addressed through its own bank.
+The checkpoint tables are created by a migration, and the API reads and
+writes them as its ordinary database role. The API never connects as the
+database owner.
 
 ### 5.4 Guardrails as a node
 The `guardrails` node blocks unsecured credit for a customer in deficit,

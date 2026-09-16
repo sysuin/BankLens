@@ -351,11 +351,55 @@ message listed the whole catalogue.
   Compose file is a local stack and the production pipeline does not run
   the seed. The guard was added anyway: `app/db/seed.py` refuses to run when
   `BANKLENS_ENV=production`, matching the existing JWT-secret guard.
-- Below-the-bar notes kept for later: the MCP server's tenant argument is
-  not slug-validated (local stdio process); spans and query-log rows survive
-  a customer deletion because they carry no foreign key (ids and numbers
-  only); the API process holds the owner database URL for the span exporter
-  and checkpointer.
+- Three below-the-bar notes came with it. All three are now fixed; see H3
+  and H4.
+
+### H3. The API process connected as the database owner
+- **Symptom:** none visible. The review noticed that the API held the owner
+  connection in three places: the span exporter, the daily-budget lookup and
+  LangGraph's checkpointer. No user input reached those connections, so it
+  was not exploitable, but a bug in any of them would have run with the power
+  to drop tables and bypass every row-level policy.
+- **Cause:** convenience. The exporter writes spans for several banks in one
+  batch, the budget reads across the day's spans, and LangGraph's `setup()`
+  creates its own tables, which needs DDL rights.
+- **Options:** (1) leave it and document it; (2) a third database role just
+  for infrastructure writes; (3) move all three to the ordinary API role and
+  grant exactly what each needs.
+- **Chosen:** (3), in migration 0008. The exporter groups a batch by tenant
+  and writes each group in its own transaction with the tenant pinned, so the
+  spans policy checks every row. The budget lookup pins the tenant and reads
+  under the policy. LangGraph's tables are created by the migration, as the
+  owner, and the API role gets row access only; at startup the API checks the
+  checkpoint schema version instead of running DDL, and refuses with the fix
+  if a LangGraph upgrade needs a new migration.
+- **Why not (2):** "no new database role without a policy review" is a rule
+  in `CLAUDE.md`, and a role that exists to bypass tenancy is the one most
+  worth avoiding.
+- **Proof:** `test_api_runs_pause_and_resume_without_the_owner_role` points
+  the owner URL at a database that does not exist, then signs in, uploads,
+  pauses a run, approves it and resumes it. Spans are still stored and the
+  budget is still read. The worker still uses the owner role to claim jobs
+  across tenants; it is a separate process and is next on the list.
+
+### H4. Retention missed two stores, and tenant slugs were paths
+- **Spans and query-log rows survived a customer delete.** They carry
+  statement and run ids but no foreign key, so the cascade never reached
+  them. Adding foreign keys was considered and rejected: a span can be
+  exported for a statement whose transaction later rolled back, and the
+  failed insert would silently drop tracing. Chosen: the delete removes, in
+  the same tenant-pinned transaction, every trace that touched the
+  customer's statements or runs (whole traces, the rule cost attribution
+  already uses) and the query-log rows for those statements. The response and
+  the audit row now report both counts.
+- **Tenant slugs became directory names unchecked.** The MCP server passed
+  its `tenant` argument into `knowledge_base/<tenant>` and the index
+  directory, and the index rebuild deletes that directory first. The MCP
+  server is a local process driven by the operator's own agent, so this was
+  not remotely reachable. Chosen: one validator in `app/pipeline/rag.py`
+  (lowercase letters, digits, `_` and `-`, at most 64 characters) that every
+  path, index and collection name goes through, and an MCP error that names
+  the banks that exist so the calling agent can correct itself.
 
 ---
 

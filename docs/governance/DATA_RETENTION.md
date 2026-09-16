@@ -13,8 +13,8 @@
 | Profiles | `profiles` | Model narrative about the statement; no account identifiers | With the statement |
 | Runs, decisions | `runs`, `decisions` | Declared/observed income, reviewer email, note | Audit horizon |
 | Audit trail | `audit_events` | Actor email, **hash** of inputs, model, prompt version, tokens | Append-only; API role cannot update or delete; audit horizon |
-| Spans | `spans` | Ids and numbers only; never statement text | 30 days suggested |
-| Query log | `query_log` | Template name, parameters (ids, categories), role, actor | Audit horizon |
+| Spans | `spans` | Ids and numbers only; never statement text | 30 days suggested; deleted with the customer (whole traces) |
+| Query log | `query_log` | Template name, parameters (ids, categories), role, actor | Audit horizon; deleted with the customer's statements |
 | Jobs | `jobs` | The uploaded file bytes until processed | Purge `content` after `done`; suggested 7 days |
 | Profile cache | `profile_cache` | Narrative keyed by a hash of computed inputs | 30 days suggested |
 | LangGraph checkpoints | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | Graph state, incl. metrics and the retrieved passages | Purged by the customer delete; thread ids are `<tenant_id>:<run_id>`, so a run is only addressable through its own bank (no row-level policy on these three tables) |
@@ -36,10 +36,13 @@ one tenant per transaction; the chat role sees only tenant-filtered views.
 ## Deletion
 
 `DELETE /customers/{id}` (reviewer role) removes the customer inside a
-tenant-pinned transaction; statements, transactions, metrics, profiles, runs,
-decisions, audit events, spans and query-log rows follow by foreign-key
-cascade, and the LangGraph checkpoint rows for those runs are purged by run
-id in the same call. One audit row remains, `retention / customer_deleted`,
+tenant-pinned transaction. Statements, transactions, metrics, profiles, runs,
+decisions and audit events follow by foreign-key cascade. Spans and query-log
+rows carry ids but no foreign key, so the same transaction deletes every
+trace that touched the customer's statements or runs and the query-log rows
+for those statements; the tables' policies limit both deletes to the caller's
+bank. The LangGraph checkpoint rows for those runs are purged by run id in
+the same call. One audit row remains, `retention / customer_deleted`,
 carrying counts and the customer reference only.
 
 ## Demo data

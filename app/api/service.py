@@ -20,7 +20,7 @@ import uuid
 from decimal import Decimal
 
 import pandas as pd
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
@@ -475,13 +475,15 @@ async def delete_customer(
     """
     The retention action: remove a customer and everything derived from them.
 
-    Statements, ledger lines, metrics, profiles, runs, decisions, audit rows,
-    spans and query-log rows go by foreign-key cascade inside a tenant-pinned
-    transaction, so the policy decides what is deletable. LangGraph's
-    checkpoints have no foreign key, so their rows are purged by run id
-    afterwards. The deletion itself is recorded as an audit event that
-    references no deleted row (counts only), so the trail still shows that
-    the deletion happened, by whom, and how much went.
+    Statements, ledger lines, metrics, profiles, runs, decisions and audit
+    rows go by foreign-key cascade inside a tenant-pinned transaction, so the
+    policy decides what is deletable. Three stores have no foreign key to the
+    customer and are removed explicitly: every trace that touched one of the
+    customer's statements or runs (whole traces, the same rule cost
+    attribution uses), the query-log rows for those statements, and
+    LangGraph's checkpoints for those runs. The deletion itself is recorded as
+    an audit event that references no deleted row (counts only), so the trail
+    still shows that it happened, by whom, and how much went.
     """
     from app.graph import audit
     from app.graph.builder import purge_checkpoints
@@ -499,13 +501,32 @@ async def delete_customer(
                 )
             ).scalars()
         )
-        statement_count = (
+        statement_ids = list(
+            (
+                await session.execute(
+                    select(Statement.id).where(Statement.customer_id == customer_id)
+                )
+            ).scalars()
+        )
+        statement_count = len(statement_ids)
+        # Spans and query-log rows carry ids but no foreign key; the policy
+        # on both tables limits these deletes to the pinned tenant.
+        span_rows = (
             await session.execute(
-                select(func.count())
-                .select_from(Statement)
-                .where(Statement.customer_id == customer_id)
+                text(
+                    "DELETE FROM spans WHERE trace_id IN ("
+                    "  SELECT trace_id FROM spans"
+                    "  WHERE statement_id = ANY(:sids) OR run_id = ANY(:rids))"
+                ),
+                {"sids": statement_ids, "rids": run_ids},
             )
-        ).scalar_one()
+        ).rowcount
+        query_log_rows = (
+            await session.execute(
+                text("DELETE FROM query_log WHERE statement_id = ANY(:sids)"),
+                {"sids": statement_ids},
+            )
+        ).rowcount
         external_ref = customer.external_ref
         # A bulk DELETE so the database cascades; the ORM would try to
         # orphan the statements first and hit the NOT NULL on customer_id.
@@ -522,6 +543,8 @@ async def delete_customer(
             "statements": int(statement_count),
             "runs": len(run_ids),
             "checkpoint_rows": checkpoint_rows,
+            "span_rows": int(span_rows or 0),
+            "query_log_rows": int(query_log_rows or 0),
         },
     )
     return {
@@ -529,4 +552,6 @@ async def delete_customer(
         "statements": int(statement_count),
         "runs": len(run_ids),
         "checkpoint_rows": checkpoint_rows,
+        "span_rows": int(span_rows or 0),
+        "query_log_rows": int(query_log_rows or 0),
     }

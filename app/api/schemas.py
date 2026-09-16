@@ -57,6 +57,8 @@ class CustomerDeleted(BaseModel):
     statements: int
     runs: int
     checkpoint_rows: int
+    span_rows: int = 0
+    query_log_rows: int = 0
 
 
 # ── Statements ───────────────────────────────────────────────────────────────

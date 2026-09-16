@@ -361,8 +361,12 @@ judged its own redaction markers.
   and it is not written because nothing has measured the need.
 - **Checkpoints are namespaced, not policied.** LangGraph's tables have no
   tenant column, so since Phase 8 every thread id is `<tenant_id>:<run_id>`
-  and the retention delete purges them by run. Row-level security still does
-  not apply to those three tables.
+  and the retention delete purges them by run. The API reads and writes them
+  as its ordinary role, never the owner, but row-level security still does
+  not apply to those tables.
+- **The worker still claims jobs as the database owner.** The API process no
+  longer uses the owner role anywhere; the bulk worker does, to claim jobs
+  across banks, and then processes each job inside that bank's session.
 - **Minutes saved is still an assumption.** `make pilot` prints what the
   database can prove (seconds to a profile, reviewer wait, throughput) next to
   the twenty-minute assumption, labelled as one.

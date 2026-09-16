@@ -14,6 +14,7 @@ Handles the full retrieval-augmented generation workflow:
 
 import hashlib
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -47,8 +48,23 @@ KNOWLEDGE_BASE_ROOT = Path(__file__).resolve().parent.parent.parent / "knowledge
 KNOWLEDGE_BASE_DIR = KNOWLEDGE_BASE_ROOT / settings.default_tenant
 
 
+# A tenant slug becomes a directory name (knowledge_base/<slug>, the index
+# directory) and part of a collection name. Anything but this shape is
+# refused before it reaches a path, so "../" or "/" can never walk out of
+# those roots, and the index rebuild's rmtree can never point elsewhere.
+_TENANT_SLUG = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def validate_tenant_slug(tenant: str) -> str:
+    if not isinstance(tenant, str) or not _TENANT_SLUG.fullmatch(tenant):
+        raise ValueError(
+            f"invalid tenant {tenant!r}: use lowercase letters, digits, '_' or '-'"
+        )
+    return tenant
+
+
 def _tenant_or_default(tenant: str | None) -> str:
-    return tenant or current_tenant()
+    return validate_tenant_slug(tenant or current_tenant())
 
 
 def kb_dir(tenant: str | None = None) -> Path:

@@ -7,11 +7,12 @@ The decision graph: wiring, checkpointing, and the two entry points.
                      stream the remaining nodes
 
 Checkpoints live in Postgres through LangGraph's AsyncPostgresSaver, keyed
-by thread id = run id. That is what makes "stop the server, come back
-tomorrow, approve, and it finishes" work: nothing about the run is held in
-memory. The checkpointer connects as the owner role because its tables are
-its own; the run id that addresses them is only reachable through the
-RLS-protected `runs` table.
+by thread id = `<tenant_id>:<run_id>`. That is what makes "stop the server,
+come back tomorrow, approve, and it finishes" work: nothing about the run is
+held in memory. The tables are created by migration 0008 as the owner; the
+checkpointer connects as the API role and runs no DDL. The tables carry no
+tenant column, so the run id that addresses them is only reachable through
+the RLS-protected `runs` table.
 """
 
 from __future__ import annotations
@@ -56,9 +57,9 @@ async def get_checkpointer() -> AsyncPostgresSaver:
     global _pool, _saver
     async with _lock:
         if _saver is None:
-            _, admin_url = _resolve_urls()
+            app_url, _ = _resolve_urls()
             _pool = AsyncConnectionPool(
-                conninfo=_psycopg_conninfo(admin_url),
+                conninfo=_psycopg_conninfo(app_url),
                 min_size=1,
                 max_size=4,
                 open=False,
@@ -66,9 +67,35 @@ async def get_checkpointer() -> AsyncPostgresSaver:
             )
             await _pool.open()
             _saver = AsyncPostgresSaver(_pool)
-            await _saver.setup()
+            await _assert_checkpoint_schema_current(_pool, len(_saver.MIGRATIONS) - 1)
             logger.info("LangGraph Postgres checkpointer ready")
     return _saver
+
+
+async def _assert_checkpoint_schema_current(pool, expected: int) -> None:
+    """
+    The checkpoint tables are created by migration 0008, as the owner.
+
+    The API connects as the ordinary role and runs no DDL, so it checks
+    instead of calling LangGraph's setup(): if a LangGraph upgrade added
+    checkpoint migrations, it refuses with the fix rather than failing on
+    the first paused run.
+    """
+    async with pool.connection() as conn:
+        try:
+            cur = await conn.execute("SELECT max(v) FROM checkpoint_migrations")
+            row = await cur.fetchone()
+        except Exception as exc:  # noqa: BLE001 - reported with the fix
+            raise RuntimeError(
+                "LangGraph checkpoint tables are missing; run `make migrate`."
+            ) from exc
+    applied = row[0] if row and row[0] is not None else -1
+    if applied < expected:
+        raise RuntimeError(
+            f"LangGraph checkpoint schema is at {applied}, this version needs "
+            f"{expected}; add a migration that runs PostgresSaver.setup() "
+            "(see alembic/versions/0008_least_privilege.py) and run `make migrate`."
+        )
 
 
 async def close_checkpointer() -> None:

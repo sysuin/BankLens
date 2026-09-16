@@ -66,9 +66,11 @@ class PostgresSpanExporter(SpanExporter):
     """
     Synchronous exporter used from the SDK's processor thread.
 
-    Uses a plain psycopg connection as the owner role: the exporter is
-    infrastructure, and it must not depend on any request's tenant context.
-    Spans without a tenant attribute (e.g. /health) are not stored.
+    Connects as the API role, not the owner. A batch can hold spans for
+    several banks, so rows are grouped by tenant and each group is written
+    in its own transaction with `app.tenant_id` pinned: the spans policy then
+    refuses any row whose tenant does not match. Spans without a tenant
+    attribute (e.g. /health) are not stored.
     """
 
     def __init__(self) -> None:
@@ -81,8 +83,8 @@ class PostgresSpanExporter(SpanExporter):
         from app.db.session import _resolve_urls
 
         if self._conn is None or self._conn.closed:
-            _, admin_url = _resolve_urls()
-            conninfo = admin_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+            app_url, _ = _resolve_urls()
+            conninfo = app_url.replace("postgresql+asyncpg://", "postgresql://", 1)
             self._conn = psycopg.connect(conninfo, autocommit=True)
         return self._conn
 
@@ -91,11 +93,18 @@ class PostgresSpanExporter(SpanExporter):
         if not rows:
             return SpanExportResult.SUCCESS
         try:
+            by_tenant: dict[str, list[dict]] = {}
+            for row in rows:
+                by_tenant.setdefault(str(row["tenant_id"]), []).append(row)
             with self._conn_lock:
                 conn = self._connection()
-                with conn.cursor() as cur:
-                    cur.executemany(
-                        """
+                for tenant_id, tenant_rows in by_tenant.items():
+                    with conn.transaction(), conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT set_config('app.tenant_id', %s, true)", (tenant_id,)
+                        )
+                        cur.executemany(
+                            """
                         INSERT INTO spans (tenant_id, trace_id, span_id, parent_span_id, name,
                             kind, status, start_time, end_time, duration_ms, run_id,
                             statement_id, request_id, model, tokens_in, tokens_out,
@@ -106,8 +115,8 @@ class PostgresSpanExporter(SpanExporter):
                             %(model)s, %(tokens_in)s, %(tokens_out)s, %(cost_usd)s,
                             %(attributes)s)
                         """,
-                        rows,
-                    )
+                            tenant_rows,
+                        )
             return SpanExportResult.SUCCESS
         except Exception as exc:  # noqa: BLE001 - tracing must never take the app down
             logger.warning("span export to Postgres failed: %s", exc)

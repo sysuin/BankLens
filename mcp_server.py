@@ -39,6 +39,23 @@ os.chdir(Path(__file__).resolve().parent)
 mcp = MCPServer("banklens")
 
 
+def _resolve_tenant(tenant: str) -> str | None:
+    """
+    Empty means the configured default. Anything else must be a bank with a
+    catalogue on disk; the error names the ones that exist, so the calling
+    agent can correct itself.
+    """
+    if not tenant:
+        return None
+    from app.pipeline.rag import list_tenants, validate_tenant_slug
+
+    validate_tenant_slug(tenant)
+    available = list_tenants()
+    if tenant not in available:
+        raise ValueError(f"unknown tenant {tenant!r}; available: {available}")
+    return tenant
+
+
 def _analyze(csv_path: str, tenant: str | None = None) -> tuple:
     """Run the full pipeline on a statement CSV. Shared by both tools."""
     import pandas as pd
@@ -79,7 +96,7 @@ def analyze_statement(csv_path: str, tenant: str = "") -> dict:
     """
     from app.pipeline.agent import build_profile
 
-    resolved = tenant or None
+    resolved = _resolve_tenant(tenant)
     metrics, chunks = _analyze(csv_path, resolved)
     profile = build_profile(metrics, chunks, tenant=resolved)
 
@@ -126,7 +143,7 @@ def search_products(query: str, tenant: str = "") -> list[dict]:
     """
     from app.pipeline.rag import build_vector_store, retrieve
 
-    resolved = tenant or None
+    resolved = _resolve_tenant(tenant)
     return retrieve(query, build_vector_store(resolved), tenant=resolved)
 
 

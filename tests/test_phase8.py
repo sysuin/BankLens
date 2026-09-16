@@ -68,6 +68,22 @@ def _checkpoint_rows(pg_cluster, thread: str) -> int:
     return run_db(pg_cluster["admin_url"], go)
 
 
+def _span_rows(pg_cluster, run_id: str) -> int:
+    async def go(engine):
+        async with engine.connect() as conn:
+            return (
+                await conn.execute(
+                    text(
+                        "SELECT count(*) FROM spans WHERE trace_id IN ("
+                        "SELECT trace_id FROM spans WHERE run_id = :r)"
+                    ),
+                    {"r": run_id},
+                )
+            ).scalar_one()
+
+    return run_db(pg_cluster["admin_url"], go)
+
+
 # ── checkpoints and retention ────────────────────────────────────────────────
 
 
@@ -106,12 +122,17 @@ def test_deleting_a_customer_removes_everything_and_leaves_a_count(
         == 404
     )
 
+    assert _span_rows(pg_cluster, run_id) > 0
+
     response = client.delete(f"/customers/{customer_id}", headers=meridian_reviewer)
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["statements"] == 1 and body["runs"] == 1
     assert body["checkpoint_rows"] > 0
+    assert body["span_rows"] > 0
     assert _checkpoint_rows(pg_cluster, thread) == 0
+    # Spans have no foreign key; the retention path removes the whole traces.
+    assert _span_rows(pg_cluster, run_id) == 0
     assert customer_id not in {
         c["id"] for c in client.get("/customers", headers=meridian_rm).json()
     }
@@ -320,3 +341,89 @@ def test_seed_refuses_to_run_in_production(monkeypatch):
     monkeypatch.setattr(settings, "banklens_env", "production")
     with pytest.raises(RuntimeError, match="BANKLENS_ENV=production"):
         asyncio.run(seed())
+
+
+# ── least privilege: the API process never needs the owner role ──────────────
+
+
+def test_api_runs_pause_and_resume_without_the_owner_role(pg_cluster, monkeypatch):
+    """
+    Point the owner URL at a database that does not exist, then do everything
+    the API does: sign in, upload, run the graph to its pause, decide, resume.
+    Spans must still be stored and the budget still read. If any request path
+    reached for the owner connection, this would fail.
+    """
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.api.app import create_app
+    from app.db import session as db_session
+    from app.graph import builder
+    from app.platform import gateway
+    from tests.test_graph import _fake_narrate_factory, _fake_retrieve
+
+    monkeypatch.setattr(
+        settings,
+        "database_admin_url",
+        "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/no_such_db",
+    )
+    db_session.reset_engines()
+    builder.reset_checkpointer()
+    gateway._budget_cache.clear()
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("app.graph.nodes._retrieve_sync", side_effect=_fake_retrieve)
+        )
+        stack.enter_context(
+            patch("app.graph.nodes._narrate_sync", side_effect=_fake_narrate_factory())
+        )
+        with TestClient(create_app()) as client:
+            rm = login(client, "meridian", "rm")
+            _, run_id = _paused_run(client, rm, "M-P8-LEAST")
+            reviewer = login(client, "meridian", "reviewer")
+            decision = next(
+                d
+                for d in client.get("/reviews", headers=reviewer).json()
+                if d["run_id"] == run_id
+            )
+            events = sse_events(
+                client,
+                "POST",
+                f"/reviews/{decision['id']}",
+                reviewer,
+                {"action": "approve"},
+            )
+            assert events[-1]["event"] == "done"
+            assert gateway.budget_for("meridian") is not None
+
+    monkeypatch.undo()
+    db_session.reset_engines()
+    builder.reset_checkpointer()
+    assert _span_rows(pg_cluster, run_id) > 0
+
+
+def test_tenant_slugs_cannot_become_paths():
+    from app.pipeline.rag import kb_dir, persist_dir_for, validate_tenant_slug
+
+    for bad in ("../meridian", "meridian/../../etc", "/tmp", "Meridian", "", "a" * 65):
+        with pytest.raises(ValueError):
+            validate_tenant_slug(bad)
+    with pytest.raises(ValueError):
+        kb_dir("../../etc")
+    with pytest.raises(ValueError):
+        persist_dir_for("..")
+    assert validate_tenant_slug("harbor") == "harbor"
+
+
+def test_mcp_names_the_available_tenants():
+    from mcp_server import _resolve_tenant
+
+    assert _resolve_tenant("") is None
+    assert _resolve_tenant("harbor") == "harbor"
+    with pytest.raises(ValueError, match="available"):
+        _resolve_tenant("nosuchbank")
+    with pytest.raises(ValueError, match="invalid tenant"):
+        _resolve_tenant("../meridian")
