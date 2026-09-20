@@ -46,13 +46,13 @@ app/graph/       LangGraph decision graph: nodes, builder (checkpointer), audit
 app/platform/    gateway (providers, breaker, budgets), tracing, pricing, guardrails, registry, ratelimit
 app/warehouse/   semantic_layer.yaml, semantic (loader/validator), query (runner), router (intent), pilot
 app/api/         FastAPI: routes/, service, decisions, traces, deps (auth, rate limit), sse
-app/db/          models, session (RLS pinning), local (embedded Postgres), seed
+app/db/          models, session (RLS pinning), local (embedded Postgres), seed, users
 app/worker.py    bulk job worker (SKIP LOCKED, leases)
 app/main.py      Streamlit console (direct mode and API mode)
 evals/           golden set, run_evals, compare_providers, redteam/, bias_check, baseline/
 alembic/         migrations 0001–0009; every tenant table's RLS policy lives here
 docs/            discovery, numbers_card, governance/ (tracked); the rest is a local library
-scripts/         prove_isolation, show_trace, load_test, pilot_report
+scripts/         prove_isolation, show_trace, load_test, pilot_report, create_user
 ```
 
 ## Running things

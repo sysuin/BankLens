@@ -164,6 +164,11 @@ body is trusted for identity.
 Two roles: `rm` can create customers, upload statements and run analyses;
 `reviewer` can decide reviews and delete customers.
 
+On a laptop the four demo users come from `make seed`. A deployed platform
+has none, because the seed refuses to run in production: its password is
+printed in this repository. There, `python -m scripts.create_user` makes the
+first real ones, asking for the password at the terminal.
+
 ### 4.2 Multi-tenancy enforced by the database
 Every tenant table has a `tenant_id` column and a Postgres **row-level
 security policy**: `tenant_id = current_setting('app.tenant_id')`. The API

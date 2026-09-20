@@ -19,7 +19,7 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | cache hit skips the whole profile span; keyed by computed inputs, shared across processes, tenant-scoped | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | unchanged, per tenant | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | unchanged; stated in `docs/governance/DATA_RETENTION.md` | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **417 passed** in 22 files, ≈55–85 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **425 passed** in 23 files, ≈55–85 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | ≈19,400 lines across `app/`, `evals/`, `scripts/`, `tests/`, `mcp_server.py`; 19 knowledge-base documents in two tenants | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a | **100 % of 43 attacks blocked, 0 % false positives on 37 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |

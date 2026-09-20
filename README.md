@@ -397,6 +397,7 @@ judged its own redaction markers.
 | Append-only audit trail | `app/graph/audit.py`, `alembic/versions/0002_decisions.py` | inputs hashed; API role has no UPDATE/DELETE |
 | Multi-tenancy in the database | `alembic/versions/0001_platform.py`, `app/db/session.py` | policies; `tenant_session()` pins `app.tenant_id` |
 | JWT, roles | `app/api/security.py`, `app/api/deps.py` | `require_role()` |
+| Real users where the seed refuses to run | `app/db/users.py`, `scripts/create_user.py` | password typed at the terminal, never an argument |
 | Rate limit shared across replicas | `app/platform/ratelimit.py`, `alembic/versions/0007_retention_ratelimit.py` | `PostgresLimiter.hit()`: one upsert per request |
 | Retention: delete a customer, purge checkpoints | `app/api/service.py`, `app/graph/builder.py` | `delete_customer()`, `purge_checkpoints()`, tenant-prefixed `thread_id()` |
 | One credit policy for the graph and the evals | `app/pipeline/policy.py` | `forbidden_in_deficit()` |

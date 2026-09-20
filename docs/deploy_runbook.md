@@ -74,9 +74,21 @@ gh workflow run "BankLens CI/CD" --ref main
 
 ### After the first API deploy
 
-- The database has no users. The seed refuses production on purpose. Create
-  real users with a one-off script against the owner URL on the host, never
-  with the demo password.
+- The database has no users: the seed refuses production on purpose. Create
+  the first ones on the host, in a one-off container that has the owner URL.
+  The password is typed at the terminal and never appears in an argument, an
+  environment variable or a log:
+
+  ```bash
+  docker run --rm -it --network banklens \
+    --env-file /home/ec2-user/banklens-platform/migrate.env \
+    "$ECR_REPOSITORY:latest" python -m scripts.create_user \
+    --tenant meridian --email asha.verma@bank.example \
+    --name "Asha Verma" --role reviewer
+  ```
+
+  Passwords under 12 characters, and the demo password, are refused. Add
+  `--reset-password` to change an existing user's password.
 - Check `https://<site>/api/health`. If it does not answer but
   `curl http://127.0.0.1:8000/health` on the host does, the site's proxy is
   not nginx on this host; route `/api/` to port 8000 wherever the proxy is.
