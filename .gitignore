@@ -11,6 +11,7 @@ docs/*
 !docs/17_platform_from_scratch.md
 !docs/18_challenges_and_decisions.md
 !docs/deploy_runbook.md
+!docs/mcp_runbook.md
 !docs/pilot_protocol.md
 !docs/governance/
 !docs/governance/*.md

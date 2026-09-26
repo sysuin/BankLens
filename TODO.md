@@ -5,7 +5,7 @@ that changes it. Finished items move to "Done recently" with the date, and
 drop off after a few weeks; the full history is in git and in
 `docs/18_challenges_and_decisions.md`.
 
-Last updated: 2026-09-20.
+Last updated: 2026-09-27.
 
 ## In progress
 
@@ -38,6 +38,9 @@ Last updated: 2026-09-20.
 
 ## Done recently
 
+- 2026-09-27: `docs/mcp_runbook.md` — registering the MCP server in an
+  MCP host, the three tools and their tenant scoping, worked prompts and
+  troubleshooting. README points at it.
 - 2026-09-20: `scripts/create_user.py` and `app/db/users.py`, so a deployed
   platform can have real users without the seed.
 - 2026-09-16: worker claims jobs through `claim_next_job()` (migration 0009);

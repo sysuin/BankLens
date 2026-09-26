@@ -703,16 +703,23 @@ when the statement changes.
 
 `mcp_server.py` exposes the pipeline over the Model Context Protocol:
 `analyze_statement` (full profile), `compute_statement_metrics` (free,
-deterministic, no LLM), and `search_products` (hybrid KB search). The wrapper
-is deliberately thin — it re-exports the same functions the app calls, so the
-MCP surface cannot drift from the product. Claude Desktop config:
+deterministic, no LLM), and `search_products` (hybrid KB search). The two
+that touch a catalogue take a `tenant` slug — a directory under
+`knowledge_base/`, validated against what is on disk, defaulting to the
+configured tenant. The wrapper is deliberately thin: it re-exports the same
+functions the app calls, so the MCP surface cannot drift from the product.
+
+Claude Desktop config — **quit the app (⌘Q) before editing this file**, it
+rewrites the config on exit and drops entries added while it is running:
 
 ```json
 "banklens": {
-    "command": "/path/to/BankLens/.venv/bin/python",
-    "args": ["/path/to/BankLens/mcp_server.py"]
+    "command": "/absolute/path/to/BankLens/.venv/bin/python",
+    "args": ["/absolute/path/to/BankLens/mcp_server.py"]
 }
 ```
+
+Setup, worked prompts and troubleshooting: **[`docs/mcp_runbook.md`](docs/mcp_runbook.md)**.
 
 ---
 
