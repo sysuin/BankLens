@@ -155,3 +155,16 @@ class TestAgentLoop:
         answer = "".join(run_chat_turn("q", [], metrics, _df()))
         assert "maximum number of tool rounds" in answer
         assert len(fake.seen_messages) == MAX_TOOL_ROUNDS
+
+
+# ── History belongs to one statement ─────────────────────────────────────────
+
+
+def test_switching_statement_clears_the_chat_history():
+    from app.main import select_statement
+
+    ss = {"selected_statement_id": "a", "chat_history": ["about customer A"]}
+    select_statement(ss, "a")
+    assert ss["chat_history"] == ["about customer A"]
+    select_statement(ss, "b")
+    assert ss["chat_history"] == [] and ss["selected_statement_id"] == "b"

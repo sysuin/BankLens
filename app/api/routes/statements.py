@@ -230,6 +230,27 @@ async def chat(
     # Injection only at this stage: the raw question is kept for routing and
     # for the scope gate, which must judge the words the user typed.
     guard = guard_chat_question(body.question, tenant, check_scope=False)
+    if guard.allowed:
+        # The history comes from the client, so an earlier "user" or forged
+        # "assistant" turn could carry the instruction instead of the
+        # question. Every turn is scanned like the question.
+        from app.platform.guardrails import ChatGuard, scan_injection
+
+        for turn, message in enumerate(body.history):
+            verdict = scan_injection(message.content)
+            if verdict.blocked:
+                guard = ChatGuard(
+                    False,
+                    "injection",
+                    body.question,
+                    {
+                        "in_history": True,
+                        "turn": turn,
+                        "role": message.role,
+                        "families": list(verdict.families),
+                    },
+                )
+                break
     if not guard.allowed:
         message = (
             "I can't act on instructions embedded in a question. Ask about this "

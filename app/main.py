@@ -357,6 +357,17 @@ def render_statement_views(
                     st.error(f"Chat error: {e}")
 
 
+def select_statement(ss, statement_id) -> None:
+    """
+    Make `statement_id` the one on screen. The chat history belongs to one
+    statement: switching clears it, so one customer's conversation is never
+    sent as history for the next (as upload and sign-out already did).
+    """
+    if ss.get("selected_statement_id") != statement_id:
+        ss["chat_history"] = []
+    ss["selected_statement_id"] = statement_id
+
+
 def _direct_chat_stream(question: str, metrics, categorized_df):
     """Direct mode: run the tool-calling chat in-process."""
     from app.pipeline.chat import run_chat_turn
@@ -729,7 +740,7 @@ def main_api() -> None:
                 else 0
             )
             choice = st.selectbox("Choose a statement", list(options), index=index)
-            ss.selected_statement_id = options[choice]
+            select_statement(ss, options[choice])
         else:
             st.info("No statements yet." + (" Upload one below." if is_rm else ""))
 

@@ -41,11 +41,12 @@ Last updated: 2026-10-02.
 Found while writing up the system in detail (2026-10-02); each has a fix in
 mind but no code yet.
 
-- [ ] **Chat history outlives the statement in API mode.** Picking another
-  statement in the console doesn't clear `chat_history`, so the previous
-  customer's conversation is sent as history. The API also trusts
-  client-sent history unscanned (40 messages, no length cap). Key it to the
-  statement, or keep it server-side.
+- [ ] **Chat history still lives with the client.** Switching statement now
+  clears it, and the API scans every turn and caps its length, but a client
+  can still send an invented but innocent-looking "assistant" turn. The full
+  fix is server-side history keyed by tenant, user and statement: a tenant
+  table with an RLS policy (new migration, `TENANT_TABLES`), included in
+  deletion and retention.
 - [ ] **Chat answers are rendered as Markdown with links and images intact.**
   An image URL makes the browser fetch it. Neutralise URLs in chat output on
   every door, with red-team cases.
@@ -59,6 +60,11 @@ mind but no code yet.
 
 ## Done recently
 
+- 2026-10-02: **Chat history.** The API-mode console no longer carries one
+  customer's chat into the next when the RM picks another statement. The API
+  scans every client-sent history turn like the question (an instruction in
+  an earlier or forged turn is blocked before any model, with an audit row)
+  and caps each at 4,000 characters.
 - 2026-10-02: **Front-door parity.** The statement injection scan and the
   profile guardrails (catalogue, deficit-credit block, output scan) ran only
   on the API path; production's direct-mode console and the MCP server

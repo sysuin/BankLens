@@ -110,7 +110,8 @@ class ProfileOut(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant)$")
-    content: str
+    # The history is sent by the client, so it is bounded like the question.
+    content: str = Field(max_length=4000)
 
 
 class ChatRequest(BaseModel):
