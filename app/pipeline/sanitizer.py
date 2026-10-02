@@ -13,13 +13,32 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Regex Patterns for PII Detection
+# Regex Patterns for PII Detection, applied in order. A replacement may be a
+# function of the match, so an account number keeps exactly its last four
+# digits whatever its length.
+
+
+def _mask_account(match: re.Match) -> str:
+    return f"{match.group(1)} #XXXX-XXXX-{match.group(2)[-4:]}"
+
+
 PATTERNS = [
-    # Bank Account Numbers (e.g. Acc #981238471234 -> Acc #XXXX-XXXX-1234)
-    (r"\b(acc|account|ac)\s*#?\s*(\d{6,16})\b", r"\1 #XXXX-XXXX-\2"),
+    # Bank account numbers, any length from 6 digits (e.g. Acc #981238471234,
+    # A/c No. 12345678 -> Acc #XXXX-XXXX-1234). The replacement used to be the
+    # whole captured number, which re-inserted it: 6-9, 14-15 and 17+ digit
+    # accounts came out in full, and 10-13 digits were masked only because the
+    # phone pattern happened to match the leftover digits.
+    (
+        r"\b(acc|account|acct|a/c|ac)\b\.?\s*(?:no\.?|number)?\s*[#:.-]?\s*(\d{6,})\b",
+        _mask_account,
+    ),
     # Credit Card Numbers (e.g. 4532 9812 3456 7890 -> XXXX-XXXX-XXXX-7890)
     (r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?(\d{4})\b", r"XXXX-XXXX-XXXX-\1"),
-    # Phone numbers
+    # Indian mobile numbers as they are usually written: 98765 43210,
+    # +91-9876543210, 09876543210. Not inside a longer digit run, so UPI and
+    # NEFT reference numbers are left alone.
+    (r"(?<!\d)(?:\+91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)", r"[REDACTED_PHONE]"),
+    # Phone numbers (North American shapes)
     (
         r"\b(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
         r"[REDACTED_PHONE]",

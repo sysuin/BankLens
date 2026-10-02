@@ -385,7 +385,7 @@ judged its own redaction markers.
 |---|---|---|
 | Deterministic metrics, risk band, health score | `app/pipeline/analyzer.py` | fixed thresholds; no model anywhere near them |
 | Schema-enforced authority boundary | `app/pipeline/agent.py` | `ProfileNarrative` (model) vs `CustomerProfile` (code) |
-| PII masking before any model | `app/pipeline/sanitizer.py` | regex families; applied at ingest and on chat input |
+| PII masking before any model | `app/pipeline/sanitizer.py` | regex families; applied at ingest and on chat input; property tests over every account length |
 | Hybrid retrieval, RRF, multi-query, per-tenant index | `app/pipeline/rag.py` | `retrieve()`, `_rrf_merge_chunk_lists()`, `persist_dir_for()` |
 | Validator scoped to the retrieved shelf | `app/pipeline/agent.py` | `retrieved_shelf()`, `_validate_product_name()`: the retry hint names only retrieved products |
 | Reranker shipped off, by measurement | `app/core/config.py` | the comment on `rerank_backend` |

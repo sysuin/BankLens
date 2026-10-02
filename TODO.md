@@ -5,7 +5,7 @@ that changes it. Finished items move to "Done recently" with the date, and
 drop off after a few weeks; the full history is in git and in
 `docs/18_challenges_and_decisions.md`.
 
-Last updated: 2026-09-27.
+Last updated: 2026-10-02.
 
 ## In progress
 
@@ -38,6 +38,12 @@ Last updated: 2026-09-27.
 
 ## Done recently
 
+- 2026-10-02: **Account-number masking** keeps only the last four digits at
+  every length; the old pattern re-inserted the captured number, so 6-9,
+  14-15 and 17+ digit accounts came out in full (10-13 were masked only by
+  accident, by the phone pattern). Indian mobiles (`98765 43210`,
+  `+91-9876543210`) are masked. Property tests cover every length and
+  spelling.
 - 2026-09-27: `docs/mcp_runbook.md` — registering the MCP server in an
   MCP host, the three tools and their tenant scoping, worked prompts and
   troubleshooting. README points at it.
