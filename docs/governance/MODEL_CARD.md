@@ -45,8 +45,9 @@ nDCG 0.879 with the reranker off.
 | p50 / p95 latency | 8.5 s / 12.0 s | 34.9 s / 50.4 s |
 | cost per query | $0.0096 | $0 |
 
-Guardrails: 80-case red-team suite, 100 % of attacks blocked, 0 % false
-positives. Bias: `evals/bias_check.py` shows identical risk bands and scores
+Guardrails: 91-case red-team suite, 100 % of attacks blocked, 0 % false
+positives. Links, images and URLs are removed from chat and template answers
+(also while streaming), and model text is escaped in the profile cards. Bias: `evals/bias_check.py` shows identical risk bands and scores
 across demographic rewrites of every golden statement.
 
 ## Prompt versions

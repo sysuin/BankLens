@@ -339,7 +339,10 @@ async def chat(
             )
         except (ValueError, wq.TemplateNotAllowed) as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
-        answer = wq.format_answer(result)
+        # Template answers can quote transaction text, which is untrusted.
+        from app.platform.guardrails import neutralise_links
+
+        answer = neutralise_links(wq.format_answer(result))
         await audit.record(
             principal.tenant_id,
             statement_id=statement_id,

@@ -47,9 +47,6 @@ mind but no code yet.
   fix is server-side history keyed by tenant, user and statement: a tenant
   table with an RLS policy (new migration, `TENANT_TABLES`), included in
   deletion and retention.
-- [ ] **Chat answers are rendered as Markdown with links and images intact.**
-  An image URL makes the browser fetch it. Neutralise URLs in chat output on
-  every door, with red-team cases.
 - [ ] **`vision_ocr.py` builds `ChatOpenAI` directly**, bypassing the gateway
   (no breaker, budget, fallback or cost span). Route it through
   `gateway.chat_model()`; add a test that forbids direct clients.
@@ -60,6 +57,12 @@ mind but no code yet.
 
 ## Done recently
 
+- 2026-10-02: **Links in rendered output.** Chat answers are rendered as
+  Markdown, where an image makes the browser fetch its URL. Links, images and
+  URLs are now removed from chat answers while they stream (`LinkNeutraliser`)
+  and from template answers; the profile cards escape model text, which used
+  to go into raw HTML unescaped. Red-team gains a links channel: 91 cases,
+  47 must-stop / 44 benign, 100 % / 0 %.
 - 2026-10-02: **Chat history.** The API-mode console no longer carries one
   customer's chat into the next when the RM picks another statement. The API
   scans every client-sent history turn like the question (an instruction in

@@ -17,6 +17,7 @@ No model is called. This runs in CI on every push.
 from __future__ import annotations
 
 import io
+import re
 import sys
 from collections import defaultdict
 
@@ -24,6 +25,7 @@ from app.platform.guardrails import (
     NEUTRALISED,
     guard_chat_question,
     guard_sql,
+    neutralise_links,
     scan_injection,
     scan_output,
     scan_statement,
@@ -50,7 +52,17 @@ def judge(case: Case) -> bool:
         return guard_sql(case.text, SQL_ALLOWED).blocked
     if case.channel == "output":
         return scan_output(case.text).blocked
+    if case.channel == "links":
+        # "Blocked" means the text was changed; for an attack, it also has to
+        # come out with no URL left in it.
+        out = neutralise_links(case.text)
+        if case.expect_blocked:
+            return out != case.text and not _URL_LEFT.search(out)
+        return out != case.text
     raise ValueError(case.channel)
+
+
+_URL_LEFT = re.compile(r"https?://|www\.|data:|<img|!\[", re.IGNORECASE)
 
 
 def file_channel_checks() -> list[tuple[str, bool, str]]:

@@ -52,7 +52,7 @@ app/worker.py    bulk job worker (SKIP LOCKED, leases)
 app/main.py      Streamlit console (direct mode and API mode)
 evals/           golden set, run_evals, compare_providers, redteam/, bias_check, baseline/
 alembic/         migrations 0001–0009; every tenant table's RLS policy lives here
-docs/            discovery, numbers_card, governance/ (tracked); the rest is a local library
+docs/            discovery, numbers_card, runbooks, governance/ (tracked); local only: guide/, interview_guide/, library/
 scripts/         prove_isolation, show_trace, load_test, pilot_report, create_user
 ```
 

@@ -222,7 +222,7 @@ treats it that way, deterministically and before any model:
   allow-listed relations with a LIMIT; the Phase 6 warehouse path uses it.
 
 ```bash
-make redteam        # 80 cases, no model calls, exits 1 below the thresholds
+make redteam        # 91 cases, no model calls, exits 1 below the thresholds
 ```
 
 ```
@@ -323,7 +323,7 @@ OpenAI key (set `OPENAI_API_KEY` to use the hosted model instead).
    instruction (`python -c "from evals.redteam.cases import injected_pdf;
    open('/tmp/x.pdf','wb').write(injected_pdf())"`): neutralised at ingest,
    visible in the ledger, the trace and the audit trail. `make redteam` prints
-   the 80-case block rate. *(90 s)*
+   the 91-case block rate. *(90 s)*
 6. **Two providers, one suite.** `make evals PROVIDER=ollama` with no key in
    the environment, or `make compare` for the side-by-side table. Say out loud
    where the local model is worse (percentages, latency) and that it passes
@@ -410,7 +410,8 @@ judged its own redaction markers.
 | Zero-key demo (Ollama) | `app/platform/gateway.py`, `Makefile` | `LLM_PROVIDER=auto`; `make evals PROVIDER=ollama` |
 | Job queue and worker | `app/worker.py`, `app/api/routes/jobs.py`, `alembic/versions/0009_worker_claim.py` | `claim_next_job()`: the one cross-bank step, `SKIP LOCKED`, leases, cost per job from spans |
 | Injection, scope gate, SQL allow-list, output scan | `app/platform/guardrails.py` | `scan_statement()`, `scope_gate()`, `guard_sql()` |
-| Red-team suite in CI | `evals/redteam/` | 80 cases, block rate and false-positive rate |
+| Red-team suite in CI | `evals/redteam/` | 91 cases, block rate and false-positive rate |
+| Links removed from rendered output | `app/platform/guardrails.py` | `neutralise_links()`, `LinkNeutraliser` (while streaming); profile cards escape model text |
 | Semantic layer and vetted SQL templates | `app/warehouse/semantic_layer.yaml`, `app/warehouse/semantic.py` | validated at import |
 | Views-only database role, deny on base tables | `alembic/versions/0006_warehouse.py` | `banklens_chat`, four views with the tenant predicate |
 | Intent router | `app/warehouse/router.py` | trigger coverage, confidence floor, role denial |

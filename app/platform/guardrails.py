@@ -20,7 +20,11 @@ every input before any model is involved:
                               Phase 6 warehouse path; tested now.
 
 Plus `scan_output(text)`: a model's narrative must not echo an injected
-instruction or leak a PII shape; and `check_profile(...)`, the profile-level
+instruction or leak a PII shape; `neutralise_links(text)` and
+`LinkNeutraliser`: answers are rendered as Markdown, where an image URL makes
+the reader's browser fetch it (a known way to leak data), so links, images
+and URLs are removed from chat output, even while it streams; and
+`check_profile(...)`, the profile-level
 checks (catalogue, deficit-credit block, retrieval support, output scan) that
 every front door runs on a narrative before anyone sees it — the graph's
 guardrails node, the API's direct profile endpoint, the console's direct mode
@@ -511,3 +515,106 @@ def check_profile(
                 f"{'; '.join(verdict.matched)}"
             )
     return ProfileCheck(tuple(violations), tuple(warnings))
+
+
+# ── Links in rendered output ─────────────────────────────────────────────────
+#
+# Chat answers are rendered as Markdown in the console. A Markdown image makes
+# the browser fetch its URL as soon as it is shown, so a model steered by an
+# injected instruction could leak data in a query string without anyone
+# clicking anything. Links are a phishing risk too. Nothing BankLens answers
+# needs a URL (the knowledge base contains none), so every link target is
+# dropped: images become a marker, links keep their text, bare URLs and raw
+# <img> tags are removed.
+
+IMAGE_REMOVED = "[image removed]"
+LINK_REMOVED = "[link removed]"
+
+_LINK_RULES: tuple[tuple[re.Pattern, object], ...] = (
+    # Raw HTML images, in case a client renders HTML.
+    (re.compile(r"<img\b[^>]*>", re.IGNORECASE), IMAGE_REMOVED),
+    # Inline and reference-style images: ![alt](url), ![alt][ref]
+    (re.compile(r"!\[[^\]\n]*\]\([^)\n]*\)"), IMAGE_REMOVED),
+    (re.compile(r"!\[[^\]\n]*\]\[[^\]\n]*\]"), IMAGE_REMOVED),
+    # Inline and reference-style links keep only their text.
+    (re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)"), r"\1"),
+    (re.compile(r"\[([^\]\n]+)\]\[[^\]\n]*\]"), r"\1"),
+    # Reference definitions: [ref]: url "title"
+    (re.compile(r"^[ \t]*\[[^\]\n]+\]:[ \t]*\S+.*$", re.MULTILINE), ""),
+    # Autolinks and bare URLs (including data: and www. forms).
+    (
+        re.compile(r"<(?:https?|ftp|data|javascript):[^>\s]*>", re.IGNORECASE),
+        LINK_REMOVED,
+    ),
+    (
+        re.compile(
+            r"\b(?:https?|ftp)://[^\s)\]>]+|\bwww\.[^\s)\]>]+|\bdata:[\w/+.-]+;[^\s)\]>]+",
+            re.IGNORECASE,
+        ),
+        LINK_REMOVED,
+    ),
+)
+
+
+def neutralise_links(text: str) -> str:
+    """Remove images, link targets and URLs from Markdown text."""
+    for pattern, replacement in _LINK_RULES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# A construct that may still be completed by the next chunk of a stream.
+_COMPLETE_LINK = re.compile(r"!?\[[^\]\n]*\](?:\([^)\n]*\)|\[[^\]\n]*\])")
+# Closed brackets that can no longer become a link: not followed by "(" or
+# "[", nor by ":" (which may start a reference definition, "[ref]: url").
+_CLOSED_BRACKETS = re.compile(r"!?\[[^\]\n]*\][^(\[:]")
+_MAX_HELD = 2000
+
+
+class LinkNeutraliser:
+    """
+    Apply `neutralise_links` to a stream of text chunks.
+
+    A link or URL can arrive split across chunks ("![x](htt", "p://..."), so
+    text is released only up to a point where no construct can still be
+    completed: before the last word (which may be a URL being typed), before
+    an unclosed `[`, `![`, `[..](` or `<` on the current line. Markdown links
+    don't span lines, so a newline releases everything before it. Held text
+    never grows beyond a bound; past it, it is neutralised and released.
+    """
+
+    def __init__(self) -> None:
+        self._held = ""
+
+    def feed(self, chunk: str) -> str:
+        self._held += chunk
+        cut = self._safe_cut(self._held)
+        if len(self._held) - cut > _MAX_HELD:
+            cut = len(self._held)
+        out, self._held = self._held[:cut], self._held[cut:]
+        return neutralise_links(out)
+
+    def flush(self) -> str:
+        out, self._held = self._held, ""
+        return neutralise_links(out)
+
+    @staticmethod
+    def _safe_cut(text: str) -> int:
+        cut = re.search(r"\S*$", text).start()
+        line_start = text.rfind("\n") + 1
+        for opener in re.finditer(r"!?\[", text[line_start:]):
+            start = line_start + opener.start()
+            rest = text[start:]
+            if not (_COMPLETE_LINK.match(rest) or _CLOSED_BRACKETS.match(rest)):
+                cut = min(cut, start)
+                break
+        angle = text.rfind("<", line_start)
+        if angle != -1 and ">" not in text[angle:]:
+            cut = min(cut, angle)
+        # Never cut through a complete construct: a closed <img ...> tag or
+        # link whose end lies after the cut would be filtered in two halves.
+        for pattern, _ in _LINK_RULES:
+            for match in pattern.finditer(text):
+                if match.start() < cut < match.end():
+                    cut = match.start()
+        return cut

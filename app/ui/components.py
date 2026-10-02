@@ -30,6 +30,7 @@ The palette is resolved twice, deliberately:
 Neither alone is sufficient, which is why both are emitted.
 """
 
+import html
 import textwrap
 import pandas as pd
 import streamlit as st
@@ -892,6 +893,20 @@ def _score_gauge(score: int, colour_token: str) -> str:
     )
 
 
+def _model_text(value: object) -> str:
+    """
+    Model-written text, made safe to place inside the HTML these cards build.
+
+    The cards are rendered with unsafe_allow_html, so an unescaped `<img src=…>`
+    in a narrative would make the RM's browser fetch it; and a blank line ends
+    the HTML block, after which Streamlit renders Markdown, images included.
+    Links and images are removed, then the rest is escaped.
+    """
+    from app.platform.guardrails import neutralise_links
+
+    return html.escape(neutralise_links(str(value)))
+
+
 def render_profile_card(profile: CustomerProfile) -> None:
     """Render the AI customer persona, health-score gauge and risk badge."""
     risk_colour = RISK_COLOURS.get(profile.risk_profile, "#64748b")
@@ -926,7 +941,7 @@ def render_profile_card(profile: CustomerProfile) -> None:
         f"<div class='bl-panel'>"
         f"<div class='bl-panel-head' style='color:{colour};'>"
         f"<span class='bl-panel-icon'>{icon}</span>{title}</div>"
-        f"<p class='bl-panel-body'>{body}</p></div>"
+        f"<p class='bl-panel-body'>{_model_text(body)}</p></div>"
         for icon, title, colour, body in panels
     )
 
@@ -935,7 +950,7 @@ def render_profile_card(profile: CustomerProfile) -> None:
         <div class='bl-profile-head'>
             <div class='bl-persona'>
                 <span class='bl-eyebrow'>Customer Archetype</span>
-                <h2 class='bl-persona-name'>{profile.financial_persona}</h2>
+                <h2 class='bl-persona-name'>{_model_text(profile.financial_persona)}</h2>
             </div>
             <div class='bl-profile-stats'>
                 {_score_gauge(score, score_token)}
@@ -964,10 +979,10 @@ def render_recommendation(profile: CustomerProfile) -> None:
                 🥇 PRIMARY PRODUCT OFFER
             </div>
             <h3 style='color:var(--bl-primary-title); margin:0 0 0.5rem 0; font-weight:800;'>
-                🏆 {profile.primary_product}
+                🏆 {_model_text(profile.primary_product)}
             </h3>
             <p style='color:var(--bl-body); font-size:0.95rem; line-height:1.55; margin:0;'>
-                {profile.primary_reason}
+                {_model_text(profile.primary_reason)}
             </p>
         </div>
         """
@@ -980,10 +995,10 @@ def render_recommendation(profile: CustomerProfile) -> None:
                 🥈 SECONDARY CROSS-SELL OFFER
             </div>
             <h3 style='color:var(--bl-secondary-title); margin:0 0 0.5rem 0; font-weight:800;'>
-                💎 {profile.secondary_product}
+                💎 {_model_text(profile.secondary_product)}
             </h3>
             <p style='color:var(--bl-body); font-size:0.95rem; line-height:1.55; margin:0;'>
-                {profile.secondary_reason}
+                {_model_text(profile.secondary_reason)}
             </p>
         </div>
         """
@@ -1030,7 +1045,7 @@ RESOURCES: {', '.join(profile.retrieved_sources)}
 
     points_html = "".join(
         [
-            f"<li style='margin-bottom: 0.6rem; color: var(--bl-hook-text); font-size: 0.96rem; line-height: 1.5;'>{pt}</li>"
+            f"<li style='margin-bottom: 0.6rem; color: var(--bl-hook-text); font-size: 0.96rem; line-height: 1.5;'>{_model_text(pt)}</li>"
             for pt in profile.rm_hook_points
         ]
     )

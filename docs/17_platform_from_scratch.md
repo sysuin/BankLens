@@ -309,8 +309,8 @@ with weights, so a block is explainable and testable.
   the approved views, with a `LIMIT`, no settings functions. Every warehouse
   template is checked against it when the application starts.
 
-`evals/redteam/` holds 80 cases, 41 must-stop and 39 benign inputs, across CSV
-rows, a generated PDF, chat, SQL and output. `make redteam` prints the block
+`evals/redteam/` holds 91 cases, 47 must-stop and 44 benign inputs, across CSV
+rows, a generated PDF, chat, SQL, output and links in rendered output. `make redteam` prints the block
 rate and the false-positive rate and CI fails below the thresholds. Current:
 100 percent blocked, 0 percent false positives.
 

@@ -147,14 +147,22 @@ def run_chat_turn(
         HumanMessage(content=question),
     ]
 
+    # Answers are rendered as Markdown: links, images and URLs are removed as
+    # the text streams, so an image never reaches a browser (and the stored
+    # history holds the same, neutralised text).
+    from app.platform.guardrails import LinkNeutraliser
+
+    links = LinkNeutraliser()
     final_text = ""
     for round_index in range(MAX_TOOL_ROUNDS):
         accumulated = None
         for chunk in llm.stream(messages):
             accumulated = chunk if accumulated is None else accumulated + chunk
             if chunk.content:
-                final_text += chunk.content
-                yield chunk.content
+                safe = links.feed(chunk.content)
+                if safe:
+                    final_text += safe
+                    yield safe
 
         if accumulated is None:
             break
@@ -182,8 +190,15 @@ def run_chat_turn(
             messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
     else:
         note = "\n\n*(Stopped after the maximum number of tool rounds.)*"
-        final_text += note
-        yield note
+        tail = links.flush() + note
+        final_text += tail
+        yield tail
+        links = None
+    if links is not None:
+        tail = links.flush()
+        if tail:
+            final_text += tail
+            yield tail
 
     history.append(HumanMessage(content=question))
     history.append(AIMessage(content=final_text))
