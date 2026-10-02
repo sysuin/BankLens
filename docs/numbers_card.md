@@ -19,7 +19,7 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Cached second run | ≈18 s vs ≈40 s in production UI (older figure, includes Streamlit overhead) | cache hit skips the whole profile span; keyed by computed inputs, shared across processes, tenant-scoped | `docs/06_llmops_production_and_cost.md` |
 | Vector store warm start | 1.3 s (fingerprint match, no re-embed) | unchanged, per tenant | same script |
 | Scanned PDF | **fails without vision OCR** (`VISION_OCR_ENABLED=false` by default; OCR sends page images out before masking) | unchanged; stated in `docs/governance/DATA_RETENTION.md` | `data/sample_4_scanned_statement.pdf` |
-| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **425 passed** in 23 files, ≈55–85 s (boots a throwaway Postgres) | `python -m pytest -q` |
+| Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **425 passed** in 23 files, ≈55–85 s (boots a throwaway Postgres); **567 passed** in 24 files, 58.9 s, after the 2026-10-02 security fixes (commit `a58132b`) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | ≈19,400 lines across `app/`, `evals/`, `scripts/`, `tests/`, `mcp_server.py`; 19 knowledge-base documents in two tenants | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
 | Guardrail block rate | n/a | **100 % of 41 must-stop inputs blocked (36 attacks + 5 off-topic), 0 % false positives on 39 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
@@ -105,6 +105,27 @@ What the table says, said out loud: the 3B local model passes every **blocking**
 - **Rate limit across replicas without Redis.** One upsert per request on a `(user_id, minute)` row; two limiter instances over one database agree on the fourth call. Compose and the K8s manifest set `RATE_LIMIT_BACKEND=postgres`.
 - **Checkpoints are addressable only through their bank.** Thread ids are `<tenant_id>:<run_id>`; the same run id under Harbor's namespace finds zero rows. `DELETE /customers/{id}` (reviewer) cascades through eleven tables by foreign key and purges the checkpoint rows for the customer's runs; one audit row remains with counts and the reference, no name.
 - **The pilot report is timestamps, not a promise.** Platform time is run duration minus reviewer wait (the first version reported 163 s p95 because one run had waited three minutes for a human); the manual figure prints as an assumption.
+
+## Security fixes (2026-10-02)
+
+Found by re-reading the code while writing it up, fixed on `fix/masking-and-parity`
+(commits `3f46cfc`, `a58132b`). Not yet merged or deployed.
+
+- **Account-number masking.** The replacement re-inserted the captured number. A property test
+  (no six consecutive digits of the original may survive, 8 spellings × 15 lengths = 120 cases)
+  fails on the old code in **80 of 120** cases and passes on the fix. Before: 6–9, 14–15 and
+  17+ digit accounts came out in full; 10–13 were masked only by the phone pattern; 16 by the
+  card pattern. Indian mobiles (`98765 43210`) were not masked; now they are.
+  `python -m pytest -q tests/test_sanitizer.py`.
+- **Front-door parity.** The statement injection scan and the profile guardrails ran only on the
+  API path. Now every door calls `app/pipeline/governed.py` and `guardrails.check_profile()`;
+  `tests/test_front_door_parity.py` fails if a door stops calling them. Console direct mode,
+  run headless with Streamlit's AppTest: a planted instruction was neutralised on all three
+  samples with the numbers unchanged (75.75 % Low, 13.00 % Medium, −46.4 % High), and a blocked
+  profile was withheld with its reason.
+- **Everything else unchanged by the fixes:** `make gate` green — golden deterministic layer
+  all blocking checks pass, red-team 100 % of 41 must-stop blocked and 0 % false positives on 39
+  benign, bias identical across 65 × 5.
 
 ## Caveats I say out loud
 
