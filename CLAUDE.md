@@ -41,7 +41,8 @@ the evaluation gate enforce, and the reason the system can be trusted.
 ## Layout
 
 ```
-app/pipeline/    parse, sanitize, categorize, analyze, rag, reranker, agent, chat, cache, policy
+app/pipeline/    parse, sanitize, categorize, analyze, rag, reranker, agent, chat, cache, policy,
+                 governed (the ingest and profile checks every front door runs)
 app/graph/       LangGraph decision graph: nodes, builder (checkpointer), audit
 app/platform/    gateway (providers, breaker, budgets), tracing, pricing, guardrails, registry, ratelimit
 app/warehouse/   semantic_layer.yaml, semantic (loader/validator), query (runner), router (intent), pilot

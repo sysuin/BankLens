@@ -143,6 +143,40 @@ def test_profile_is_generated_and_stored_with_provenance(client, meridian_rm):
     )
 
 
+def test_direct_profile_endpoint_withholds_a_blocked_profile(client, meridian_rm):
+    # The same guardrails as the decision graph: a narrative that leaks a PII
+    # shape is neither stored nor returned, and the decision is an audit row.
+    customer_id = _customer(client, meridian_rm)
+    summary = upload_sample(client, meridian_rm, customer_id)
+    chunks = [{"source": "fixed_deposit.md", "content": "Fixed Deposit ..."}]
+
+    def fake_profile_sync(metrics, tenant_slug):
+        bad = dict(
+            _profile_payload(), primary_reason="Send the offer to a.b@example.com"
+        )
+        return CustomerProfile.model_validate(bad), chunks, False
+
+    with patch("app.api.service._profile_sync", side_effect=fake_profile_sync):
+        blocked = client.post(
+            f"/statements/{summary['id']}/profile", headers=meridian_rm
+        )
+    assert blocked.status_code == 422, blocked.text
+    detail = blocked.json()["detail"]
+    assert detail["blocked"] is True
+    assert any(v.startswith("primary_reason") for v in detail["violations"])
+
+    assert (
+        client.get(
+            f"/statements/{summary['id']}/profile", headers=meridian_rm
+        ).status_code
+        == 404
+    )
+    trail = client.get(f"/statements/{summary['id']}/audit", headers=meridian_rm).json()
+    assert any(
+        e["node"] == "guardrail.profile" and e["event"] == "blocked" for e in trail
+    )
+
+
 def test_chat_streams_server_sent_events(client, meridian_rm):
     customer_id = _customer(client, meridian_rm)
     summary = upload_sample(client, meridian_rm, customer_id)

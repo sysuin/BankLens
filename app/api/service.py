@@ -38,9 +38,7 @@ from app.db.models import (
 )
 from app.db.session import tenant_session
 from app.pipeline.agent import SYSTEM_PROMPT_PATH, CustomerProfile
-from app.pipeline.analyzer import FinancialMetrics, compute_metrics
-from app.pipeline.categorizer import categorize_dataframe
-from app.pipeline.sanitizer import sanitize_dataframe
+from app.pipeline.analyzer import FinancialMetrics
 
 logger = get_logger(__name__)
 
@@ -53,6 +51,14 @@ class NotFound(Exception):
 
 class BadInput(ValueError):
     """The uploaded file could not be turned into a statement."""
+
+
+class ProfileBlocked(Exception):
+    """The narrative failed the profile guardrails; it was not stored."""
+
+    def __init__(self, violations: list[str]):
+        super().__init__("; ".join(violations))
+        self.violations = violations
 
 
 # ── Pipeline (sync, run in a thread) ─────────────────────────────────────────
@@ -86,26 +92,16 @@ def _analyze_sync(filename: str, content: bytes, tenant_slug: str):
             "pipeline.parse", **{"file.kind": filename.rsplit(".", 1)[-1].lower()}
         ):
             raw, source_type = _parse_upload(filename, content)
-        with span("pipeline.sanitize"):
-            sanitized = sanitize_dataframe(raw)
-        with span("guardrail.statement_scan") as current:
-            # The statement is attacker-controlled text: neutralise
-            # instruction-like descriptions before the categorizer or any
-            # model sees them. Numbers are untouched.
-            from app.platform.guardrails import scan_statement
+        # Mask, scan, categorise, compute: the same function every front
+        # door calls (app/pipeline/governed.py).
+        from app.pipeline.governed import prepare_statement
 
-            sanitized, scan = scan_statement(sanitized)
-            current.set_attribute("guardrail.flagged_rows", scan.flagged_rows)
-            current.set_attribute("guardrail.families", sorted(set(scan.families)))
-        with span("pipeline.categorize") as current:
-            categorized = categorize_dataframe(sanitized)
-            current.set_attribute(
-                "pipeline.llm_fallback_rows",
-                int((categorized["category"] == "Others").sum()),
-            )
-        with span("pipeline.metrics") as current:
-            metrics = compute_metrics(categorized)
-            current.set_attribute("metrics.rows", int(metrics.transaction_count))
+        prepared = prepare_statement(raw)
+        categorized, metrics, scan = (
+            prepared.categorized,
+            prepared.metrics,
+            prepared.scan,
+        )
     return categorized, metrics, source_type, scan
 
 
@@ -351,7 +347,10 @@ def _summary(statement: Statement) -> dict:
 
 
 async def generate_profile(
-    tenant_id: uuid.UUID, tenant_slug: str, statement_id: uuid.UUID
+    tenant_id: uuid.UUID,
+    tenant_slug: str,
+    statement_id: uuid.UUID,
+    actor: str | None = None,
 ) -> dict:
     """Retrieve + narrate for a stored statement, then persist the profile."""
     async with tenant_session(tenant_id) as session:
@@ -363,6 +362,27 @@ async def generate_profile(
     profile, chunks, from_cache = await asyncio.to_thread(
         _profile_sync, metrics, tenant_slug
     )
+
+    # The same checks the decision graph's guardrails node runs: a blocked
+    # narrative is never stored or returned.
+    from app.graph import audit
+    from app.pipeline.governed import check
+
+    with tenant_scope(tenant_slug):
+        result = check(profile, metrics, chunks, tenant_slug)
+    await audit.record(
+        tenant_id,
+        statement_id=statement_id,
+        node="guardrail.profile",
+        event="blocked" if result.blocked else "passed",
+        actor=actor or "system",
+        payload={
+            "violations": list(result.violations),
+            "warnings": list(result.warnings),
+        },
+    )
+    if result.blocked:
+        raise ProfileBlocked(list(result.violations))
 
     async with tenant_session(tenant_id) as session:
         statement = await _load_statement(session, statement_id)

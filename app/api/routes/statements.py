@@ -101,10 +101,16 @@ async def create_profile(
 ) -> ProfileOut:
     try:
         row = await service.generate_profile(
-            principal.tenant_id, principal.tenant, statement_id
+            principal.tenant_id, principal.tenant, statement_id, actor=principal.email
         )
     except service.NotFound:
         raise _not_found()
+    except service.ProfileBlocked as blocked:
+        # The same rule as the decision graph: a blocked narrative is withheld.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"blocked": True, "violations": blocked.violations},
+        )
     return ProfileOut(**row)
 
 

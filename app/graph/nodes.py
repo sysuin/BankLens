@@ -47,8 +47,6 @@ logger = get_logger(__name__)
 
 INCOME_VERIFICATION = "income_verification"
 
-from app.pipeline.policy import CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT  # noqa: E402
-
 
 def months_in_period(period: str) -> int:
     """'2024-03' → 1; '2024-01 to 2024-12' → 12."""
@@ -398,45 +396,16 @@ async def narrate(state: GraphState) -> dict[str, Any]:
 
 
 async def guardrails(state: GraphState) -> dict[str, Any]:
-    from app.pipeline.agent import resolve_product
+    # The checks themselves live in app.platform.guardrails.check_profile, so
+    # the API's direct profile endpoint, the console's direct mode and the MCP
+    # server run exactly the same ones.
+    from app.platform.guardrails import check_profile
 
-    tenant = state["tenant"]
-    profile = state["profile"]
-    metrics = state["metrics"]
-    violations: list[str] = []
-    warnings: list[str] = []
-
-    retrieved = {c["source"] for c in state.get("chunks", [])}
-    forbidden = CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT.get(tenant, frozenset())
-    for field in ("primary_product", "secondary_product"):
-        name = profile.get(field, "")
-        resolved = resolve_product(name, tenant)
-        if resolved is None:
-            violations.append(f"{field} '{name}' is not in the {tenant} catalogue")
-            continue
-        if metrics.get("is_cashflow_negative") and resolved in forbidden:
-            violations.append(
-                f"{field} '{name}' is unsecured credit; customer is in cash-flow deficit"
-            )
-        if resolved not in retrieved:
-            warnings.append(f"{field} '{name}' was not among the retrieved sources")
-
-    # The narrative must not carry an injected instruction or a PII shape out.
-    from app.platform.guardrails import scan_output
-
-    for field in (
-        "income_stability_analysis",
-        "spending_pattern_breakdown",
-        "credit_risk_assessment",
-        "primary_reason",
-        "secondary_reason",
-    ):
-        verdict = scan_output(str(profile.get(field, "")))
-        if verdict.blocked:
-            violations.append(
-                f"{field} carries {'/'.join(verdict.families)} content: "
-                f"{'; '.join(verdict.matched)}"
-            )
+    result = check_profile(
+        state["profile"], state["metrics"], state.get("chunks", []), state["tenant"]
+    )
+    violations = list(result.violations)
+    warnings = list(result.warnings)
 
     await audit.set_run_status(
         state["tenant_id"],

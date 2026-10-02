@@ -240,13 +240,26 @@ def test_golden_set_carries_each_banks_credit_policy():
 
 
 def test_graph_and_evals_share_one_policy():
-    from app.graph import nodes
-    from app.pipeline import policy
+    # The graph's guardrails node (and every other front door) runs
+    # check_profile, which reads the same policy the evals read: every product
+    # the policy forbids in deficit is blocked, for every bank.
+    from pathlib import Path
 
-    assert (
-        nodes.CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT
-        is policy.CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT
-    )
+    from app.pipeline import policy
+    from app.platform.guardrails import check_profile
+
+    kb = Path(__file__).resolve().parent.parent / "knowledge_base"
+    for tenant, forbidden in policy.CREDIT_PRODUCTS_FORBIDDEN_IN_DEFICIT.items():
+        for filename in forbidden:
+            title = (kb / tenant / filename).read_text().splitlines()[0].lstrip("# ")
+            result = check_profile(
+                {"primary_product": title, "secondary_product": title},
+                {"is_cashflow_negative": True},
+                [{"source": filename}],
+                tenant,
+            )
+            assert result.blocked, (tenant, filename)
+            assert any("unsecured credit" in v for v in result.violations)
 
 
 # ── the pilot report ─────────────────────────────────────────────────────────

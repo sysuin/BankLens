@@ -21,13 +21,10 @@ import streamlit as st
 
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.pipeline.analyzer import compute_metrics
-from app.pipeline.categorizer import categorize_dataframe
 from app.pipeline.pdf_parser import parse_pdf_statement
-from app.pipeline.sanitizer import sanitize_dataframe
 from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
 from app.pipeline.agent import CustomerProfile
-from app.pipeline.cache import cached_build_profile
+from app.pipeline.governed import checked_profile, prepare_statement
 from app.ui.charts import render_income_vs_expense, render_spending_by_category
 from app.ui.components import (
     inject_custom_css,
@@ -140,7 +137,10 @@ def run_ai_pipeline(metrics, categorized_df) -> CustomerProfile | None:
             "   * Generating grounded response with fallback retry protection..."
         )
         try:
-            profile, from_cache = cached_build_profile(metrics, retrieved_chunks)
+            # Narrate, then the same profile guardrails the decision graph
+            # runs: a blocked narrative is never shown.
+            result = checked_profile(metrics, retrieved_chunks)
+            profile, from_cache = result.profile, result.from_cache
             if from_cache:
                 st.write(
                     "   * ⚡ Served from **response cache** — identical inputs, "
@@ -150,6 +150,16 @@ def run_ai_pipeline(metrics, categorized_df) -> CustomerProfile | None:
             status.update(label="❌ Pipeline Failed at LLM Synthesis", state="error")
             st.error(f"Profile synthesis error: {e}")
             return None
+
+        if result.check.blocked:
+            status.update(label="⛔ Profile withheld by guardrails", state="error")
+            st.error(
+                "The generated profile failed a guardrail check and is not shown:\n\n"
+                + "\n".join(f"- {v}" for v in result.check.violations)
+            )
+            return None
+        for warning in result.check.warnings:
+            st.warning(warning)
 
         status.update(
             label="✨ BankLens Enterprise AI Pipeline Execution Complete!",
@@ -530,17 +540,21 @@ def main() -> None:
         st.error(f"❌ **Error parsing bank statement:** {e}")
         return
 
-    # Apply PII Sanitization Guard
-    raw_df = sanitize_dataframe(raw_df)
-
-    # ── Pipeline Step 1 & 2: Categorization & Analytics ───────────────────────
-    categorized_df = categorize_dataframe(raw_df)
-
+    # ── Mask, scan, categorise, compute ───────────────────────────────────────
+    # The same function the API, worker and MCP server call, so the injection
+    # scan runs here too (app/pipeline/governed.py).
     try:
-        metrics = compute_metrics(categorized_df)
+        prepared = prepare_statement(raw_df)
     except ValueError as e:
         st.error(f"❌ **Error computing financial metrics:** {e}")
         return
+    categorized_df, metrics = prepared.categorized, prepared.metrics
+    if prepared.scan.flagged_rows:
+        st.warning(
+            f"🛡️ {prepared.scan.flagged_rows} transaction description(s) looked like "
+            "instructions to an AI model and were neutralised before analysis. "
+            "Amounts and dates are unchanged."
+        )
 
     render_statement_views(
         metrics,

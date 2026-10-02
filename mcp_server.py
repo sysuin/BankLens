@@ -56,28 +56,29 @@ def _resolve_tenant(tenant: str) -> str | None:
     return tenant
 
 
-def _analyze(csv_path: str, tenant: str | None = None) -> tuple:
-    """Run the full pipeline on a statement CSV. Shared by both tools."""
+def _prepare(csv_path: str):
+    """Read a statement CSV and run the shared mask -> scan -> categorise -> compute."""
     import pandas as pd
 
-    from app.pipeline.analyzer import compute_metrics
-    from app.pipeline.categorizer import categorize_dataframe
-    from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
-    from app.pipeline.sanitizer import sanitize_dataframe
+    from app.pipeline.governed import prepare_statement
 
     path = Path(csv_path).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"No statement file at: {path}")
+    return prepare_statement(pd.read_csv(path))
 
-    df = pd.read_csv(path)
-    df = sanitize_dataframe(df)
-    df = categorize_dataframe(df)
-    metrics = compute_metrics(df)
 
+def _analyze(csv_path: str, tenant: str | None = None) -> tuple:
+    """Prepare the statement and retrieve this bank's products."""
+    from app.pipeline.rag import build_retrieval_query, build_vector_store, retrieve
+
+    prepared = _prepare(csv_path)
     chunks = retrieve(
-        build_retrieval_query(metrics), build_vector_store(tenant), tenant=tenant
+        build_retrieval_query(prepared.metrics),
+        build_vector_store(tenant),
+        tenant=tenant,
     )
-    return metrics, chunks
+    return prepared, chunks
 
 
 @mcp.tool()
@@ -92,18 +93,27 @@ def analyze_statement(csv_path: str, tenant: str = "") -> dict:
     knowledge_base/); empty means the configured default tenant.
 
     Returns the computed metrics and the AI-generated profile, including the
-    two product recommendations and the RM pitch hooks.
+    two product recommendations and the RM pitch hooks, plus `guardrails`:
+    statement rows neutralised as instruction-like text, and the profile
+    checks. If a check fails (for example unsecured credit for a customer in
+    cash-flow deficit), the profile is withheld and the violations returned.
     """
-    from app.pipeline.agent import build_profile
+    from app.pipeline.governed import checked_profile
 
-    resolved = _resolve_tenant(tenant)
-    metrics, chunks = _analyze(csv_path, resolved)
-    profile = build_profile(metrics, chunks, tenant=resolved)
+    resolved = _resolve_tenant(tenant)  # None means the configured default bank
+    prepared, chunks = _analyze(csv_path, resolved)
+    result = checked_profile(prepared.metrics, chunks, tenant=resolved)
 
-    return {
-        "metrics": metrics.model_dump(),
-        "profile": profile.model_dump(),
+    out = {
+        "metrics": prepared.metrics.model_dump(),
+        "guardrails": {
+            "statement_scan": prepared.scan.as_dict(),
+            "profile": result.check.as_dict(),
+        },
     }
+    if result.profile is not None:
+        out["profile"] = result.profile.model_dump()
+    return out
 
 
 @mcp.tool()
@@ -115,20 +125,12 @@ def compute_statement_metrics(csv_path: str) -> dict:
     the essential/discretionary split, and top spending categories. Use this
     when the numbers are enough and a full narrative profile is not needed.
     """
-    import pandas as pd
-
-    from app.pipeline.analyzer import compute_metrics
-    from app.pipeline.categorizer import categorize_dataframe
-    from app.pipeline.sanitizer import sanitize_dataframe
-
-    path = Path(csv_path).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"No statement file at: {path}")
-
-    df = pd.read_csv(path)
-    df = sanitize_dataframe(df)
-    df = categorize_dataframe(df)
-    return compute_metrics(df).model_dump()
+    prepared = _prepare(csv_path)
+    out = prepared.metrics.model_dump()
+    # Rows that looked like instructions to a model were neutralised before
+    # categorisation; amounts and dates are unchanged.
+    out["statement_scan"] = prepared.scan.as_dict()
+    return out
 
 
 @mcp.tool()

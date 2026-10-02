@@ -36,8 +36,37 @@ Last updated: 2026-10-02.
   (`docs/pilot_protocol.md`, `make pilot` reads `data/pilot/timings.csv`).
   What remains is three RMs, six statements and a stopwatch.
 
+## Found on review, not started
+
+Found while writing up the system in detail (2026-10-02); each has a fix in
+mind but no code yet.
+
+- [ ] **Chat history outlives the statement in API mode.** Picking another
+  statement in the console doesn't clear `chat_history`, so the previous
+  customer's conversation is sent as history. The API also trusts
+  client-sent history unscanned (40 messages, no length cap). Key it to the
+  statement, or keep it server-side.
+- [ ] **Chat answers are rendered as Markdown with links and images intact.**
+  An image URL makes the browser fetch it. Neutralise URLs in chat output on
+  every door, with red-team cases.
+- [ ] **`vision_ocr.py` builds `ChatOpenAI` directly**, bypassing the gateway
+  (no breaker, budget, fallback or cost span). Route it through
+  `gateway.chat_model()`; add a test that forbids direct clients.
+- [ ] **Retrieval has no relevance floor** (the chat's product search returns
+  four passages even off-catalogue), product documents aren't injection-
+  scanned at index build, and `build_retrieval_query` labels the period's
+  total income "monthly income".
+
 ## Done recently
 
+- 2026-10-02: **Front-door parity.** The statement injection scan and the
+  profile guardrails (catalogue, deficit-credit block, output scan) ran only
+  on the API path; production's direct-mode console and the MCP server
+  skipped them. Both now live in `app/pipeline/governed.py` and
+  `guardrails.check_profile()`, called by the console, the API (graph and
+  direct profile endpoint, which now returns 422 and an audit row when
+  blocked), the worker and the MCP tools. The persona and RM talking points
+  are output-scanned too.
 - 2026-10-02: **Account-number masking** keeps only the last four digits at
   every length; the old pattern re-inserted the captured number, so 6-9,
   14-15 and 17+ digit accounts came out in full (10-13 were masked only by

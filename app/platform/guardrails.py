@@ -20,7 +20,11 @@ every input before any model is involved:
                               Phase 6 warehouse path; tested now.
 
 Plus `scan_output(text)`: a model's narrative must not echo an injected
-instruction or leak a PII shape. The graph's guardrails node calls it.
+instruction or leak a PII shape; and `check_profile(...)`, the profile-level
+checks (catalogue, deficit-credit block, retrieval support, output scan) that
+every front door runs on a narrative before anyone sees it — the graph's
+guardrails node, the API's direct profile endpoint, the console's direct mode
+and the MCP server all call the same function.
 """
 
 from __future__ import annotations
@@ -427,3 +431,83 @@ def scan_output(text: str) -> Verdict:
             verdict.matched + (pii.group(0)[:4] + "…",),
         )
     return verdict
+
+
+# ── Profile ──────────────────────────────────────────────────────────────────
+
+# The prose fields a model writes. The persona and the RM talking points are
+# scanned too: they reach the RM first, and an injected sentence or a PII shape
+# there is no less harmful than in the analysis.
+PROFILE_PROSE_FIELDS = (
+    "income_stability_analysis",
+    "spending_pattern_breakdown",
+    "credit_risk_assessment",
+    "primary_reason",
+    "secondary_reason",
+    "financial_persona",
+    "rm_hook_points",
+)
+
+
+@dataclass(frozen=True)
+class ProfileCheck:
+    violations: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.violations)
+
+    def as_dict(self) -> dict:
+        return {
+            "blocked": self.blocked,
+            "violations": list(self.violations),
+            "warnings": list(self.warnings),
+        }
+
+
+def check_profile(
+    profile: dict, metrics: dict, chunks: list[dict], tenant: str
+) -> ProfileCheck:
+    """
+    The checks a narrative must pass before anyone sees it.
+
+    Violations block: a product that isn't in this bank's catalogue, unsecured
+    credit for a customer in cash-flow deficit, or prose carrying an
+    instruction or a PII shape. A product that retrieval didn't surface is a
+    warning (the validator already insists the primary one was retrieved).
+    Pure: no database, no model, so every front door can run it.
+    """
+    from app.pipeline.agent import resolve_product
+    from app.pipeline.policy import forbidden_in_deficit
+
+    violations: list[str] = []
+    warnings: list[str] = []
+
+    retrieved = {c.get("source") for c in chunks}
+    forbidden = forbidden_in_deficit(tenant)
+    for field_name in ("primary_product", "secondary_product"):
+        name = profile.get(field_name, "")
+        resolved = resolve_product(name, tenant)
+        if resolved is None:
+            violations.append(f"{field_name} '{name}' is not in the {tenant} catalogue")
+            continue
+        if metrics.get("is_cashflow_negative") and resolved in forbidden:
+            violations.append(
+                f"{field_name} '{name}' is unsecured credit; customer is in cash-flow deficit"
+            )
+        if resolved not in retrieved:
+            warnings.append(
+                f"{field_name} '{name}' was not among the retrieved sources"
+            )
+
+    for field_name in PROFILE_PROSE_FIELDS:
+        value = profile.get(field_name, "")
+        text = " ".join(map(str, value)) if isinstance(value, list) else str(value)
+        verdict = scan_output(text)
+        if verdict.blocked:
+            violations.append(
+                f"{field_name} carries {'/'.join(verdict.families)} content: "
+                f"{'; '.join(verdict.matched)}"
+            )
+    return ProfileCheck(tuple(violations), tuple(warnings))
