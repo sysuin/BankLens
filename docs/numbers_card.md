@@ -22,7 +22,7 @@ command is not a number, it is a claim. Baseline measured **2026-09-08** on `mai
 | Tests | **283 passed**, 163 test functions in 12 files, 10.2 s | **425 passed** in 23 files, ≈55–85 s (boots a throwaway Postgres) | `python -m pytest -q` |
 | Code size | 6,304 lines across `app/`, `evals/`, `mcp_server.py`; 10 knowledge-base documents, 47 chunks | ≈19,400 lines across `app/`, `evals/`, `scripts/`, `tests/`, `mcp_server.py`; 19 knowledge-base documents in two tenants | `wc -l` |
 | Tokens saved by cache | n/a | exact-key cache now shared (Postgres, tenant-scoped); a hit skips the whole `llm.profile` span (≈2,300 in / 370 out tokens, ≈$0.0095) | `profile_cache` table, `hits` column |
-| Guardrail block rate | n/a | **100 % of 43 attacks blocked, 0 % false positives on 37 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
+| Guardrail block rate | n/a | **100 % of 41 must-stop inputs blocked (36 attacks + 5 off-topic), 0 % false positives on 39 benign inputs** (80-case red-team suite: statement CSV/PDF rows, chat, SQL, output); injected PDF neutralised at ingest | `make redteam` |
 | Bias check (demographic rewrites) | n/a | **65 statements × 5 groups: risk band and score identical in every case; guardrail flags equal** | `make bias` |
 | Bulk throughput and cost | n/a | **50 statements in 8.5 s worker time (356.7/min), p50 36 ms, p95 1.6 s, $0 (ingest only, concurrency 2)** | `make load` |
 | Tenant isolation test | n/a | **7 tests in `tests/test_tenancy.py` + `make prove-isolation` (RLS on → nothing; RLS off → row leaks; on → nothing)** | `make prove-isolation` |
