@@ -227,6 +227,12 @@ def print_scorecard(rows: list[tuple[str, CheckResult]]) -> int:
     return len(failures)
 
 
+def _has_openai_key() -> bool:
+    from app.core.config import settings
+
+    return bool(settings.openai_api_key.strip())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the BankLens eval suite.")
     parser.add_argument(
@@ -256,6 +262,18 @@ def main() -> int:
     )
     args = parser.parse_args()
     use_llm = args.with_llm or args.judge
+
+    paid = use_llm or args.retrieval_ab or args.multi_query_ab
+    if paid and not _has_openai_key():
+        # Fail before layer 1 with the real cause. Without this, the embeddings
+        # client falls back to a placeholder key and the run dies on a 401 for
+        # "dummy_key", which reads like a bad key rather than a missing one.
+        print(
+            "error: --with-llm, --judge, --retrieval-ab and --multi-query-ab need "
+            "OPENAI_API_KEY; it is not set. Run without them for the free layer.",
+            file=sys.stderr,
+        )
+        return 2
 
     cases = build_cases()
     rows: list[tuple[str, CheckResult]] = []
