@@ -11,7 +11,8 @@
 # — the prompt, the pipeline, the knowledge base, or the eval suite itself —
 # plus a nightly run and a manual button.
 #
-# Required secret: OPENAI_API_KEY
+# Secret: OPENAI_API_KEY. Without it the free layer still runs and the paid
+# steps are skipped with a warning, rather than failing on a 401.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: BankLens Evals
@@ -44,10 +45,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -61,15 +62,35 @@ jobs:
         # which is the ceiling on what reranking can recover.
         run: python -m evals.run_evals --headroom
 
+      - name: Check for the OpenAI key
+        # The paid steps below need the OPENAI_API_KEY secret. Without it they
+        # used to fail every night with a 401 for "dummy_key", which buried the
+        # free layer's result under a red run. Now they are skipped and the run
+        # says so loudly: a warning annotation and a line in the job summary.
+        # Add the secret (Settings -> Secrets and variables -> Actions) and the
+        # paid steps run again with no other change.
+        id: key
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            msg="OPENAI_API_KEY secret is not set: the reranker A/B and the grounded evals were skipped. Only the free deterministic layer ran."
+            echo "::warning title=Paid evals skipped::$msg"
+            echo "### ⚠️ Paid evals skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Run reranker A/B
         # Measures reranking on vs off over the golden queries. Needs the API
         # key for embeddings and for the LLM rerank backend.
+        if: ${{ steps.key.outputs.present == 'true' }}
         run: python -m evals.run_evals --retrieval-ab
 
       - name: Run grounded and judged evals
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_judge }}
+        if: ${{ steps.key.outputs.present == 'true' && (github.event_name != 'workflow_dispatch' || inputs.run_judge) }}
         run: python -m evals.run_evals --with-llm --judge
 
       - name: Run grounded evals without judge
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_judge }}
+        if: ${{ steps.key.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && !inputs.run_judge }}
         run: python -m evals.run_evals --with-llm
