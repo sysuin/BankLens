@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# BankLens — TLS certificate watch
+#
+# The production certificate (Let's Encrypt, 90 days) expired on 2026-11-05
+# because certbot-renew.timer on the EC2 host was never enabled, and nothing
+# noticed: Let's Encrypt stopped sending expiry emails in 2025. The timer is
+# enabled now (2026-11-18); this job is the independent check from outside, so
+# a renewal that breaks again fails a run and GitHub emails the owner.
+#
+# certbot renews at 30 days left. Failing at 21 leaves about 9 days of failed
+# renewals before the alarm, and three weeks to fix it before browsers warn.
+# No secrets needed: it only reads the public certificate.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: TLS certificate check
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check banklens.sysuin.com certificate
+    runs-on: ubuntu-latest
+    env:
+      HOST: banklens.sysuin.com
+      MIN_DAYS: "21"
+    steps:
+      - name: Check expiry and chain
+        run: |
+          # Strict TLS: fails on an expired, untrusted or wrong-name certificate.
+          curl -sS -o /dev/null --max-time 20 "https://$HOST/"
+
+          end=$(echo | openssl s_client -connect "$HOST:443" -servername "$HOST" 2>/dev/null \
+                | openssl x509 -noout -enddate | cut -d= -f2)
+          days=$(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+          echo "Certificate for $HOST expires $end ($days days left)."
+          echo "Certificate for **$HOST** expires $end (**$days days** left)." >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$days" -lt "$MIN_DAYS" ]; then
+            echo "::error title=Certificate expiring::$HOST has $days days left; certbot should have renewed at 30. On the host: systemctl list-timers certbot-renew.timer; sudo journalctl -u certbot-renew.service; sudo certbot renew --dry-run"
+            exit 1
+          fi
